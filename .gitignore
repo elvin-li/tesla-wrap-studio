@@ -1,0 +1,10 @@
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+cache/
+output/*
+!output/.gitkeep
+.kiro/
+# copyrighted art, kept local only
+examples/onepiece_v4/

@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wrap Studio · 特斯拉车身贴膜生成器</title>
+<meta name="description" content="把一张图片拖进来，自动生成特斯拉 Paint Shop 车身贴膜 PNG。支持全部官方车型，图片不上传，全部在浏览器里完成。">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div class="bg-glow" aria-hidden="true"></div>
+
+<header class="top">
+  <a class="brand" href="./">
+    <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff5a4e"/><stop offset="1" stop-color="#ff2d55"/></linearGradient></defs><rect width="32" height="32" rx="9" fill="url(#g)"/><path d="M8 11c5-3 11-3 16 0M10 15h12l-2 8h-8z" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <span>Wrap Studio</span>
+  </a>
+  <nav>
+    <a href="#how" data-i18n="nav.how">怎么用</a>
+    <a href="https://github.com/elvin-li/tesla-wrap-studio" target="_blank" rel="noopener">GitHub</a>
+    <button id="lang" class="pill" type="button">EN</button>
+  </nav>
+</header>
+
+<section class="hero">
+  <h1 data-i18n="hero.title">一张图，变成你的特斯拉车衣</h1>
+  <p data-i18n="hero.sub">拖进图片，自动贴满整辆车。全部 12 个官方车型，图片只在你的浏览器里处理。</p>
+</section>
+
+<main class="studio">
+  <aside class="panel">
+    <section class="step">
+      <h2><span class="num">1</span><span data-i18n="s1">选车型</span></h2>
+      <div id="models" class="models" role="listbox"></div>
+    </section>
+
+    <section class="step">
+      <h2><span class="num">2</span><span data-i18n="s2">放图片</span></h2>
+      <label id="drop" class="drop" tabindex="0">
+        <input id="file" type="file" accept="image/*" hidden>
+        <img id="thumb" alt="" hidden>
+        <div class="drop-text">
+          <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path d="M12 16V4m0 0-4 4m4-4 4 4M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <b data-i18n="drop.t">拖到这里，或点一下选图</b>
+          <small data-i18n="drop.s">也可以直接 ⌘V / Ctrl+V 粘贴</small>
+        </div>
+      </label>
+      <div class="demos">
+        <span data-i18n="demo">没图？试试：</span>
+        <button class="chip" data-demo="assets/demo_sunset.jpg" data-i18n="demo.1">海边日落</button>
+        <button class="chip" data-demo="assets/demo_neon.jpg" data-i18n="demo.2">霓虹几何</button>
+        <button class="chip" data-demo="assets/demo_ink.jpg" data-i18n="demo.3">水墨山</button>
+      </div>
+    </section>
+
+    <section class="step">
+      <h2><span class="num">3</span><span data-i18n="s3">选风格</span></h2>
+      <div class="modes" id="modes">
+        <button class="mode on" data-mode="wrap"><i class="ic ic-wrap"></i><b data-i18n="m.wrap">环绕</b><small data-i18n="m.wrap.s">风景绕车一圈</small></button>
+        <button class="mode" data-mode="poster"><i class="ic ic-poster"></i><b data-i18n="m.poster">海报</b><small data-i18n="m.poster.s">整张铺满</small></button>
+        <button class="mode" data-mode="mirror"><i class="ic ic-mirror"></i><b data-i18n="m.mirror">对称</b><small data-i18n="m.mirror.s">左右一样</small></button>
+        <button class="mode" data-mode="tile"><i class="ic ic-tile"></i><b data-i18n="m.tile">平铺</b><small data-i18n="m.tile.s">图案重复</small></button>
+      </div>
+    </section>
+
+    <section class="step">
+      <h2><span class="num">4</span><span data-i18n="s4">微调</span><button id="reset" class="link" type="button" data-i18n="reset">还原</button></h2>
+      <div id="sliders" class="sliders"></div>
+      <label class="toggle"><input type="checkbox" id="outline" checked><span></span><b data-i18n="t.outline">分区描边</b></label>
+    </section>
+  </aside>
+
+  <section class="stage">
+    <div class="stage-bar">
+      <div class="seg" id="view">
+        <button class="on" data-view="sheet" data-i18n="v.sheet">贴图</button>
+        <button data-view="lines" data-i18n="v.lines">看分区线</button>
+        <button data-view="car" data-i18n="v.car">官方车图</button>
+      </div>
+      <span id="status" class="status"></span>
+    </div>
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="out" width="1024" height="1024"></canvas>
+      <img id="carImg" alt="" hidden>
+      <div id="empty" class="empty">
+        <div class="empty-car"></div>
+        <p data-i18n="empty">先放一张图片</p>
+      </div>
+      <div id="busy" class="busy" hidden><span></span></div>
+    </div>
+
+    <div class="export">
+      <div class="name">
+        <input id="fname" maxlength="26" spellcheck="false" aria-label="file name">
+        <span>.png</span>
+      </div>
+      <button id="dl" class="primary" disabled>
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 4v12m0 0 4-4m-4 4-4-4M5 20h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span data-i18n="dl">下载贴膜 PNG</span>
+      </button>
+    </div>
+    <ul id="checks" class="checks"></ul>
+  </section>
+</main>
+
+<section id="how" class="how">
+  <h2 data-i18n="how.t">放进车里</h2>
+  <ol class="cards">
+    <li><b>01</b><h3 data-i18n="how.1">建文件夹</h3><p data-i18n="how.1p">U 盘（exFAT / FAT32）根目录建一个 <code>Wraps</code> 文件夹。</p></li>
+    <li><b>02</b><h3 data-i18n="how.2">拷进去</h3><p data-i18n="how.2p">把下载的 PNG 放进去。一次最多 10 张。</p></li>
+    <li><b>03</b><h3 data-i18n="how.3">插车上</h3><p data-i18n="how.3p">玩具箱 → 涂装店 → 贴膜，选你的图。</p></li>
+    <li><b>04</b><h3 data-i18n="how.4">或用手机</h3><p data-i18n="how.4p">特斯拉 App 4.59+：创作 → 贴膜 → 上传。</p></li>
+  </ol>
+  <p class="fine" data-i18n="fine">模板来自特斯拉官方仓库 teslamotors/custom-wraps。本项目与特斯拉无关。请只用你有权使用的图片。</p>
+</section>
+
+<footer class="foot">
+  <span>Wrap Studio · MIT</span>
+  <a href="https://github.com/teslamotors/custom-wraps" target="_blank" rel="noopener">teslamotors/custom-wraps</a>
+</footer>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

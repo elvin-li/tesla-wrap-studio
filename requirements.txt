@@ -1,0 +1,6 @@
+# Python 3.9+  (tested with Python 3.13, pillow 13, numpy 2.5, scipy 1.18)
+pillow>=10.0
+numpy>=1.24
+scipy>=1.10
+# optional (自动抠图; 不装也行 -- 直接给带透明背景的PNG即可):
+#   pip install rembg onnxruntime
