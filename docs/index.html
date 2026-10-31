@@ -25,7 +25,7 @@
 
 <section class="hero">
   <h1 data-i18n="hero.title">一张图，变成你的特斯拉车衣</h1>
-  <p data-i18n="hero.sub">拖进图片，自动贴满整辆车。全部 12 个官方车型，图片只在你的浏览器里处理。</p>
+  <p data-i18n="hero.sub">拖进图片，自动贴满整辆车，还能把脸放上车头。全部 12 个官方车型。不用 AI 时，图片只在你的浏览器里处理。</p>
 </section>
 
 <main class="studio">
@@ -52,6 +52,23 @@
         <button class="chip" data-demo="assets/demo_neon.jpg" data-i18n="demo.2">霓虹几何</button>
         <button class="chip" data-demo="assets/demo_ink.jpg" data-i18n="demo.3">水墨山</button>
       </div>
+
+      <details class="ai" id="ai">
+        <summary><i class="ic ic-ai"></i><b data-i18n="ai.t">AI 生图 / 改图</b><small data-i18n="ai.s">用你自己的大模型接口</small></summary>
+        <textarea id="aiPrompt" rows="3" data-i18n-ph="ai.ph" placeholder="写一句话，比如：赛博朋克城市夜景，霓虹灯，下雨"></textarea>
+        <div class="ai-row">
+          <button id="aiGen" class="chip strong" type="button" data-i18n="ai.gen">按文字生成新图</button>
+          <button id="aiEdit" class="chip" type="button" data-i18n="ai.edit">按文字改这张图</button>
+        </div>
+        <details class="ai-cfg" id="aiCfgBox">
+          <summary data-i18n="ai.cfg">接口设置</summary>
+          <label><span data-i18n="ai.base">接口地址</span><input id="aiBase" spellcheck="false" placeholder="https://api.openai.com/v1"></label>
+          <label><span>API Key</span><input id="aiKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-…"></label>
+          <label><span data-i18n="ai.img">生图模型</span><input id="aiImg" spellcheck="false" placeholder="gpt-image-1"></label>
+          <label><span data-i18n="ai.vis">识图模型</span><input id="aiVis" spellcheck="false" placeholder="gpt-4o-mini"></label>
+          <p class="fine" data-i18n="ai.note">支持 OpenAI 格式的接口（OpenAI、硅基流动、自建代理等）。Key 只存在这台电脑的浏览器里。用 AI 时，你的文字和图片会发给你填的接口，会按它的价格扣费。</p>
+        </details>
+      </details>
     </section>
 
     <section class="step">
@@ -61,6 +78,18 @@
         <button class="mode" data-mode="poster"><i class="ic ic-poster"></i><b data-i18n="m.poster">海报</b><small data-i18n="m.poster.s">整张铺满</small></button>
         <button class="mode" data-mode="mirror"><i class="ic ic-mirror"></i><b data-i18n="m.mirror">对称</b><small data-i18n="m.mirror.s">左右一样</small></button>
         <button class="mode" data-mode="tile"><i class="ic ic-tile"></i><b data-i18n="m.tile">平铺</b><small data-i18n="m.tile.s">图案重复</small></button>
+        <button class="mode" data-mode="face"><i class="ic ic-face"></i><b data-i18n="m.face">车头脸</b><small data-i18n="m.face.s">脸在车头</small></button>
+      </div>
+      <div id="faceBox" class="facebox" hidden>
+        <div class="facepick" id="facePick" title="">
+          <img id="faceImg" alt="">
+          <i id="faceRect" class="r face"></i><i id="subjRect" class="r subj"></i>
+        </div>
+        <div class="facetools">
+          <p data-i18n="f.tip">点图片里的脸，车头就换成它。红框 = 车头，蓝框 = 车门。</p>
+          <button id="aiFind" class="chip strong" type="button" data-i18n="f.ai">AI 自动找脸</button>
+          <label class="toggle"><input type="checkbox" id="sideOn" checked><span></span><b data-i18n="f.side">车门放人物</b></label>
+        </div>
       </div>
     </section>
 

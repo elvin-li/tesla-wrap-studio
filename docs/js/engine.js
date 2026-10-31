@@ -100,6 +100,55 @@ export function surface(T) {
   return T.surf;
 }
 
+// ---------- hood + side doors -------------------------------------------------------------------
+// All square templates share one layout: car front = sheet top, hood = big piece near the top centre,
+// each side (doors) = pieces down the left / right edge. Cybertruck (1024x768) is laid out sideways -> null.
+export function zones(T) {
+  if (T.zones !== undefined) return T.zones;
+  const { W, H, mask } = T;
+  if (W !== H) return (T.zones = null);
+  const lab = new Int32Array(W * H), comps = [], st = [];
+  for (let s = 0; s < W * H; s++) {
+    if (!mask[s] || lab[s]) continue;
+    const c = { id: comps.length + 1, n: 0, sx: 0, sy: 0, x0: W, y0: H, x1: 0, y1: 0 };
+    lab[s] = c.id; st.push(s);
+    while (st.length) {
+      const i = st.pop(), x = i % W, y = (i / W) | 0;
+      c.n++; c.sx += x; c.sy += y;
+      if (x < c.x0) c.x0 = x; if (x > c.x1) c.x1 = x; if (y < c.y0) c.y0 = y; if (y > c.y1) c.y1 = y;
+      const nb = [x > 0 ? i - 1 : -1, x < W - 1 ? i + 1 : -1, y > 0 ? i - W : -1, y < H - 1 ? i + W : -1];
+      for (const j of nb) if (j >= 0 && mask[j] && !lab[j]) { lab[j] = c.id; st.push(j); }
+    }
+    c.cx = c.sx / c.n / W; c.cy = c.sy / c.n / H; comps.push(c);
+  }
+  const hood = comps.filter((c) => c.cx > 0.38 && c.cx < 0.62 && c.cy > 0.12 && c.cy < 0.4).sort((a, b) => b.n - a.n)[0];
+  const side = (left) => {
+    // door panels: on the outer edge, mid height, big and solid (the thin curved pillar strips are skipped)
+    const cs = comps.filter((c) => (left ? c.cx < 0.27 : c.cx > 0.73) && c.cy > 0.3 && c.cy < 0.72 && c.n > 0.008 * W * H
+      && c.n / ((c.x1 - c.x0 + 1) * (c.y1 - c.y0 + 1)) > 0.4);
+    if (!cs.length) return null;
+    const z = { x0: Math.min(...cs.map((c) => c.x0)), x1: Math.max(...cs.map((c) => c.x1)),
+                y0: Math.max(0.27 * H, Math.min(...cs.map((c) => c.y0))), y1: Math.min(0.8 * H, Math.max(...cs.map((c) => c.y1))) };
+    z.cx = (z.x0 + z.x1) / 2; z.cy = (z.y0 + z.y1) / 2; return z;
+  };
+  if (!hood) return (T.zones = null);
+  return (T.zones = { lab, hood, left: side(true), right: side(false) });
+}
+
+// Tiny copy of the picture: sampled with bilinear it gives a soft, blurred background.
+function small(src, side = 40) {
+  if (src._small) return src._small;
+  const k = side / Math.max(src.w, src.h), w = Math.max(2, Math.round(src.w * k)), h = Math.max(2, Math.round(src.h * k));
+  const data = new Float32Array(w * h * 4), cnt = new Float32Array(w * h);
+  for (let y = 0; y < src.h; y++) for (let x = 0; x < src.w; x++) {
+    const j = Math.min(h - 1, (y * k) | 0) * w + Math.min(w - 1, (x * k) | 0), i = (y * src.w + x) * 4;
+    data[j * 4] += src.data[i]; data[j * 4 + 1] += src.data[i + 1]; data[j * 4 + 2] += src.data[i + 2]; cnt[j]++;
+  }
+  for (let j = 0; j < w * h; j++) for (let c = 0; c < 3; c++) data[j * 4 + c] /= Math.max(1, cnt[j]);
+  return (src._small = { w, h, data });
+}
+const smooth = (e0, e1, v) => { const t = Math.min(1, Math.max(0, (v - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+
 // ---------- source picture ------------------------------------------------------------------------
 export function detectHorizon(src) {
   const { w, h, data } = src, mean = new Float32Array(h);
@@ -109,14 +158,58 @@ export function detectHorizon(src) {
   return best;
 }
 
-function bilinear(src, u, v, out, o) {
+function bilinear(src, u, v, out, o, clamp) {
   const { w, h, data } = src;
-  u = ((u % w) + w) % w; v = Math.min(h - 1, Math.max(0, v));
+  u = clamp ? Math.min(w - 1, Math.max(0, u)) : ((u % w) + w) % w; v = Math.min(h - 1, Math.max(0, v));
   const x0 = Math.floor(u), y0 = Math.floor(v), x1 = (x0 + 1) % w, y1 = Math.min(h - 1, y0 + 1), fx = u - x0, fy = v - y0;
   for (let c = 0; c < 3; c++) {
     const a = data[(y0 * w + x0) * 4 + c], b = data[(y0 * w + x1) * 4 + c], cc = data[(y1 * w + x0) * 4 + c], dd = data[(y1 * w + x1) * 4 + c];
     out[o + c] = (a * (1 - fx) + b * fx) * (1 - fy) + (cc * (1 - fx) + dd * fx) * fy;
   }
+}
+
+// Face mode: face on the hood (turned to read from the front), the subject standing upright on each side's
+// doors (head toward the roof), a soft blurred copy of the picture everywhere else.
+// opts: face / subject = [x0,y0,x1,y1] in 0..1, faceSize, faceCrop, sideOn, sideZoom, sideShift, bgDark, feather
+function faceSampler(T, src, o, px) {
+  const { W, H } = T, Z = zones(T), lab = Z?.lab;
+  const bsrc = Z ? small(src) : src, bgS = Math.max(W / bsrc.w, H / bsrc.h), dark = Z ? 1 - o.bgDark : 1;
+  const fg = new Float32Array(3), fe = Math.max(0.02, o.feather);
+  const f = o.face || [0.32, 0.1, 0.68, 0.5];
+  const fcx = (f[0] + f[2]) / 2 * src.w, fcy = (f[1] + f[3]) / 2 * src.h;
+  const fw = Math.max(4, (f[2] - f[0]) / 2 * src.w * o.faceCrop), fh = Math.max(4, (f[3] - f[1]) / 2 * src.h * o.faceCrop);
+  let hood = null, sides = [];
+  if (Z) {
+    const h = Z.hood, s = Math.min((h.x1 - h.x0) / 2 / fw, (h.y1 - h.y0) / 2 / fh) * o.faceSize;
+    hood = { id: h.id, cx: h.cx * W, cy: h.cy * H, rx: fw * s, ry: fh * s, s };
+    if (o.sideOn) {
+      const b = o.subject || [0, 0, 1, 1], u0 = b[0] * src.w, v0 = b[1] * src.h, sw = (b[2] - b[0]) * src.w;
+      const sh = Math.min((b[3] - b[1]) * src.h, sw * 1.3);           // tall subject -> keep head and upper body
+      for (const [z, dir] of [[Z.left, 1], [Z.right, -1]]) if (z) {
+        const zw = z.x1 - z.x0, zh = z.y1 - z.y0, s2 = Math.min(zw / sh, zh / sw) * o.sideZoom;
+        sides.push({ z, dir, s: s2, cx: z.cx, cy: z.cy + o.sideShift * zh, u0, v0, sw, sh, ucx: u0 + sw / 2, vcy: v0 + sh / 2 });
+      }
+    }
+  }
+  return (i, x, y) => {
+    bilinear(bsrc, (x - W / 2) / bgS + bsrc.w / 2, (y - H / 2) / bgS + bsrc.h / 2, px, 0, true);
+    px[0] *= dark; px[1] *= dark; px[2] *= dark;
+    let a = 0;
+    if (hood && lab[i] === hood.id) {
+      const dx = x - hood.cx, dy = y - hood.cy, e = Math.hypot(dx / hood.rx, dy / hood.ry);
+      a = 1 - smooth(1 - fe, 1, e);
+      if (a > 0) bilinear(src, fcx - dx / hood.s, fcy - dy / hood.s, fg, 0, true);   // rotated 180°
+    } else for (const q of sides) {
+      if (x < q.z.x0 - 4 || x > q.z.x1 + 4 || y < q.z.y0 || y > q.z.y1) continue;
+      const dx = x - q.cx, dy = y - q.cy;
+      const u = q.ucx + q.dir * dy / q.s, v = q.vcy - q.dir * dx / q.s;           // image top -> toward the roof
+      const ea = (u - q.u0) / q.sw, eb = (v - q.v0) / q.sh, edge = Math.min(ea, 1 - ea, eb, 1 - eb);
+      a = smooth(0, fe * 0.6, edge);
+      if (a > 0) bilinear(src, u, v, fg, 0, true);
+      break;
+    }
+    if (a > 0) for (let c = 0; c < 3; c++) px[c] = px[c] * (1 - a) + fg[c] * a;
+  };
 }
 
 // ---------- render ------------------------------------------------------------------------------
@@ -137,6 +230,8 @@ export function render(T, src, o) {
       if (u >= src.w) u = pw - 1 - u;                               // mirrored panorama [A | flip(A)] = seamless
       bilinear(src, Math.min(src.w - 1, Math.max(0, u)), v, px, 0);
     };
+  } else if (o.mode === 'face') {
+    sampler = faceSampler(T, src, o, px);
   } else {
     const a = (o.angle || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
     const cover = Math.max(W / src.w, H / src.h), s = cover * (o.zoom || 1);

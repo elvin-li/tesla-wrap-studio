@@ -1,5 +1,6 @@
 import { MODELS, templateUrl, vehicleUrl } from './models.js';
-import { parseTemplate, render, exportWrap, detectHorizon } from './engine.js';
+import { parseTemplate, render, exportWrap, detectHorizon, zones } from './engine.js';
+import * as AI from './ai.js';
 
 // ---------- i18n --------------------------------------------------------------------------------
 const I18N = {
@@ -24,8 +25,25 @@ const I18N = {
     'st.loadTpl': 'Loading template…', 'st.render': 'Drawing…', 'st.ready': 'Ready', 'st.export': 'Making PNG…',
     'st.err': 'Could not load the template. Check your network.',
     'c.size': 'Size', 'c.bytes': 'Under 1 MB', 'c.name': 'Name ≤ 30', 'c.black': 'Outside is black',
+    'm.face': 'Face', 'm.face.s': 'face on hood',
+    'f.tip': 'Click the face in the picture to put it on the hood. Red = hood, blue = doors.',
+    'f.ai': 'Find the face with AI', 'f.side': 'Figure on the doors',
+    'ai.t': 'AI create / edit', 'ai.s': 'uses your own API', 'ai.ph': 'One line, e.g. cyberpunk city at night, neon, rain',
+    'ai.gen': 'Make a new picture', 'ai.edit': 'Change this picture', 'ai.cfg': 'API settings', 'ai.base': 'API URL',
+    'ai.img': 'Image model', 'ai.vis': 'Vision model',
+    'ai.note': 'Works with OpenAI-style APIs (OpenAI, SiliconFlow, your own proxy…). The key stays in this browser only. When you use AI, your text and picture go to that API and it bills you.',
+    faceSize: 'Face size', faceCrop: 'Face framing', sideZoom: 'Door figure', sideShift: 'Front / back', bgDark: 'Background dim', feather: 'Soft edge',
+    'st.ai': 'AI is drawing… (10–60 s)', 'st.aiFind': 'AI is looking for the face…', 'st.noKey': 'Fill in the API key first',
+    'st.noPrompt': 'Write a line first', 'st.noSrc': 'Add a picture first', 'st.noFace': 'This car has a different layout. Face style is not ready for it.',
+    'st.found': 'Face found', 'st.notFound': 'No face found. Click the face yourself.', 'st.aiErr': 'AI failed: ',
+    'st.urlBlocked': 'The API gave a link the browser may not read. Try a model that returns b64_json.',
   },
   zh: {
+    faceSize: '脸大小', faceCrop: '脸取景', sideZoom: '车门人物', sideShift: '前后移', bgDark: '背景压暗', feather: '边缘柔和',
+    'st.ai': 'AI 正在画…（10–60 秒）', 'st.aiFind': 'AI 正在找脸…', 'st.noKey': '先在“接口设置”里填 API Key',
+    'st.noPrompt': '先写一句话', 'st.noSrc': '先放一张图片', 'st.noFace': '这个车型布局不同，暂不支持车头脸。',
+    'st.found': '找到脸了', 'st.notFound': '没找到脸，请在小图上点一下脸。', 'st.aiErr': 'AI 出错：',
+    'st.urlBlocked': '接口返回的图片链接浏览器读不了，换个能返回 b64_json 的模型。',
     horizonD: '地平线高度', horizonShift: '天空 / 海面', spin: '转一转', oceanK: '海面深度', skyK: '天空高度',
     zoom: '放大', panX: '左右移', panY: '上下移', angle: '旋转',
     bright: '亮度', sat: '色彩', contrast: '对比度', vignette: '四周压暗',
@@ -41,8 +59,12 @@ const t = (k) => (lang === 'en' ? I18N.en[k] : I18N.zh[k] ?? zhDefaults[k]) ?? z
 function applyLang() {
   document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
   document.querySelectorAll('[data-i18n]').forEach((el) => (el.innerHTML = lang === 'zh' ? zhDefaults[el.dataset.i18n] : I18N.en[el.dataset.i18n] ?? zhDefaults[el.dataset.i18n]));
+  document.querySelectorAll('[data-i18n-ph]').forEach((el) => {
+    el.dataset.zhPh ??= el.placeholder;
+    el.placeholder = lang === 'zh' ? el.dataset.zhPh : I18N.en[el.dataset.i18nPh] ?? el.dataset.zhPh;
+  });
   $('#lang').textContent = lang === 'zh' ? 'EN' : '中文';
-  buildModels(); buildSliders(); setStatus(lastStatus);
+  buildModels(); buildSliders(); setStatus(lastStatus, lastExtra);
 }
 
 // ---------- state -------------------------------------------------------------------------------
@@ -52,11 +74,13 @@ const SL = {
   poster: [['zoom', 1, 3, 0.01, 1], ['panX', -0.5, 0.5, 0.01, 0], ['panY', -0.5, 0.5, 0.01, 0], ['angle', -180, 180, 1, 0]],
   mirror: [['zoom', 1, 3, 0.01, 1], ['panX', -0.5, 0.5, 0.01, 0], ['panY', -0.5, 0.5, 0.01, 0], ['angle', -180, 180, 1, 0]],
   tile: [['zoom', 0.3, 3, 0.01, 1], ['panX', -0.5, 0.5, 0.01, 0], ['panY', -0.5, 0.5, 0.01, 0], ['angle', -180, 180, 1, 0]],
+  face: [['faceSize', 0.5, 1.6, 0.01, 1], ['faceCrop', 1, 2.6, 0.01, 1.5], ['sideZoom', 0.4, 2, 0.01, 0.95], ['sideShift', -0.4, 0.4, 0.01, -0.18],
+         ['bgDark', 0, 0.85, 0.01, 0.35], ['feather', 0.04, 0.5, 0.01, 0.2]],
   common: [['bright', 0.5, 1.5, 0.01, 1], ['sat', 0, 2, 0.01, 1.1], ['contrast', 0.6, 1.6, 0.01, 1.05], ['vignette', 0, 0.6, 0.01, 0.15]],
 };
 const S = { model: localStorage.getItem('model') || 'modely-l', mode: 'wrap', view: 'sheet', src: null, srcName: '', T: null, rgba: null, vals: {} };
 const templates = new Map();
-const resetVals = () => { for (const k of ['wrap', 'poster', 'mirror', 'tile', 'common']) for (const [n, , , , d] of SL[k]) S.vals[`${k}.${n}`] = d; };
+const resetVals = () => { for (const k of ['wrap', 'poster', 'mirror', 'tile', 'face', 'common']) for (const [n, , , , d] of SL[k]) S.vals[`${k}.${n}`] = d; };
 resetVals();
 const val = (n) => S.vals[`${S.mode}.${n}`] ?? S.vals[`common.${n}`];
 
@@ -83,8 +107,8 @@ function buildSliders() {
     box.appendChild(row);
   }
 }
-let lastStatus = '';
-function setStatus(k) { lastStatus = k; $('#status').textContent = k ? t(k) : ''; }
+let lastStatus = '', lastExtra = '';
+function setStatus(k, extra = '') { lastStatus = k; lastExtra = extra; $('#status').textContent = k ? t(k) + extra : ''; }
 
 // ---------- template / source -------------------------------------------------------------------
 function loadImage(src, cors) {
@@ -120,9 +144,75 @@ async function setSource(blobOrUrl, name) {
   S.src = { w: d.width, h: d.height, data: d.data };
   S.srcName = (name || 'wrap').replace(/\.[^.]+$/, '');
   S.autoHorizon = detectHorizon(S.src);
+  S.im = im; S.face = guessFace(); S.subject = null; S.faceFrom = 'guess'; setStatus('st.ready');
   const th = $('#thumb'); th.src = url; th.hidden = false;
+  $('#faceImg').src = url; showRects();
   if (!$('#fname').dataset.touched) $('#fname').value = defaultName();
   $('#empty').hidden = true; schedule();
+  findFace(false);
+}
+
+// ---------- face: guess / built-in finder / AI / click ------------------------------------------
+function guessFace() {
+  const { w, h } = S.src, side = 0.34 * Math.min(w, h), cx = w / 2, cy = h * 0.36;
+  return [(cx - side / 2) / w, (cy - side * 0.6) / h, (cx + side / 2) / w, (cy + side * 0.6) / h];
+}
+function showRects() {
+  const put = (el, b) => { el.hidden = !b; if (b) Object.assign(el.style, { left: `${b[0] * 100}%`, top: `${b[1] * 100}%`, width: `${(b[2] - b[0]) * 100}%`, height: `${(b[3] - b[1]) * 100}%` }); };
+  put($('#faceRect'), S.src && S.face);
+  put($('#subjRect'), S.src && $('#sideOn').checked && S.subject);
+}
+async function findFace(useAI) {
+  if (!S.src) return;
+  const src = S.src;
+  if (!useAI) {
+    const f = await AI.localFace(S.im, S.im.naturalWidth, S.im.naturalHeight);
+    if (f && S.src === src && S.faceFrom === 'guess') { S.face = f; S.faceFrom = 'local'; showRects(); schedule(); }
+    if (S.mode === 'face' && S.faceFrom === 'guess' && AI.ready(cfg())) return findFace(true);   // auto: one call per picture
+    return;
+  }
+  const c = cfg(); if (!AI.ready(c)) { openCfg(); return setStatus('st.noKey'); }
+  aiBusy(true); setStatus('st.aiFind');
+  try {
+    const N = 1000, k = N / Math.max(src.w, src.h), dw = src.w * k, dh = src.h * k, ox = (N - dw) / 2, oy = (N - dh) / 2;
+    const cv = new OffscreenCanvas(N, N), x = cv.getContext('2d');
+    x.fillStyle = '#000'; x.fillRect(0, 0, N, N); x.drawImage(S.im, ox, oy, dw, dh);
+    const url = await blobToDataUrl(await cv.convertToBlob({ type: 'image/jpeg', quality: 0.85 }));
+    const r = await AI.locate(c, url, N, N);
+    const back = (b) => b && [(b[0] * N - ox) / dw, (b[1] * N - oy) / dh, (b[2] * N - ox) / dw, (b[3] * N - oy) / dh].map((v) => Math.min(1, Math.max(0, v)));
+    if (S.src !== src) return;
+    S.faceFrom = 'ai';
+    if (r.subject) S.subject = back(r.subject);
+    if (r.face) { S.face = back(r.face); setStatus('st.found'); } else setStatus('st.notFound');
+    showRects(); schedule();
+  } catch (e) { console.error(e); setStatus('st.aiErr', e.message); S.faceFrom = 'tried'; }
+  aiBusy(false);
+}
+const blobToDataUrl = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
+
+// ---------- AI picture ------------------------------------------------------------------------------
+const cfg = () => ({ base: $('#aiBase').value || 'https://api.openai.com/v1', key: $('#aiKey').value, imgModel: $('#aiImg').value || 'gpt-image-1', visModel: $('#aiVis').value || 'gpt-4o-mini' });
+function openCfg() { $('#ai').open = true; $('#aiCfgBox').open = true; $('#aiKey').focus(); }
+function aiBusy(on) { busy(on); ['#aiGen', '#aiEdit', '#aiFind'].forEach((s) => ($(s).disabled = on)); }
+async function aiPicture(editing) {
+  const c = cfg(), prompt = $('#aiPrompt').value.trim();
+  if (!AI.ready(c)) { openCfg(); return setStatus('st.noKey'); }
+  if (!prompt) { $('#aiPrompt').focus(); return setStatus('st.noPrompt'); }
+  if (editing && !S.src) return setStatus('st.noSrc');
+  aiBusy(true); setStatus('st.ai');
+  try {
+    let blob;
+    if (editing) {
+      const cv = new OffscreenCanvas(S.src.w, S.src.h);
+      cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(S.src.data), S.src.w, S.src.h), 0, 0);
+      blob = await AI.edit(c, await cv.convertToBlob({ type: 'image/png' }), prompt);
+    } else blob = await AI.generate(c, prompt);
+    aiBusy(false);
+    await setSource(blob, 'ai_' + prompt.normalize('NFKD').replace(/[^A-Za-z0-9]+/g, '_').slice(0, 14));
+  } catch (e) {
+    console.error(e); aiBusy(false);
+    e.message === 'image-url-blocked' ? setStatus('st.urlBlocked') : setStatus('st.aiErr', e.message);
+  }
 }
 function defaultName() {
   const base = (S.srcName || 'wrap').normalize('NFKD').replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'wrap';
@@ -144,10 +234,14 @@ function draw() {
   if (S.mode === 'wrap') Object.assign(o, {
     horizonD: val('horizonD'), spin: val('spin'), oceanK: val('oceanK'), skyK: val('skyK'),
     horizonRow: Math.max(0, Math.min(S.src.h - 1, S.autoHorizon + val('horizonShift') * S.src.h)),
+  }); else if (S.mode === 'face') Object.assign(o, {
+    face: S.face, subject: S.subject, sideOn: $('#sideOn').checked, faceSize: val('faceSize'), faceCrop: val('faceCrop'),
+    sideZoom: val('sideZoom'), sideShift: val('sideShift'), bgDark: val('bgDark'), feather: val('feather'),
   }); else Object.assign(o, { zoom: val('zoom'), panX: val('panX'), panY: val('panY'), angle: val('angle') });
   S.rgba = render(S.T, S.src, o);
   paint(); $('#checks').innerHTML = '';
-  setStatus('st.ready');
+  if (S.mode === 'face' && !zones(S.T)) setStatus('st.noFace');
+  else if (!['st.ai', 'st.aiFind', 'st.aiErr', 'st.urlBlocked', 'st.found', 'st.notFound', 'st.noKey', 'st.noPrompt', 'st.noSrc'].includes(lastStatus)) setStatus('st.ready');
 }
 function paint() {
   const c = $('#out'), x = c.getContext('2d');
@@ -198,8 +292,24 @@ document.addEventListener('drop', (e) => { const f = [...(e.dataTransfer?.files 
 document.addEventListener('paste', (e) => { const it = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/')); if (it) setSource(it.getAsFile(), 'pasted'); });
 document.querySelectorAll('[data-demo]').forEach((b) => (b.onclick = () => setSource(b.dataset.demo, b.dataset.demo.split('/').pop().replace('demo_', ''))));
 document.querySelectorAll('.mode').forEach((b) => (b.onclick = () => {
-  S.mode = b.dataset.mode; document.querySelectorAll('.mode').forEach((x) => x.classList.toggle('on', x === b)); buildSliders(); schedule();
+  S.mode = b.dataset.mode; document.querySelectorAll('.mode').forEach((x) => x.classList.toggle('on', x === b)); buildSliders();
+  $('#faceBox').hidden = S.mode !== 'face'; setStatus('st.ready'); schedule();
+  if (S.mode === 'face' && S.faceFrom === 'guess' && AI.ready(cfg())) findFace(true);
 }));
+$('#facePick').onclick = (e) => {
+  if (!S.src) return;
+  const r = e.currentTarget.getBoundingClientRect(), px = (e.clientX - r.left) / r.width, py = (e.clientY - r.top) / r.height;
+  const f = S.face, hw = (f[2] - f[0]) / 2, hh = (f[3] - f[1]) / 2;
+  S.face = [px - hw, py - hh, px + hw, py + hh]; S.faceFrom = 'click'; showRects(); schedule();
+};
+$('#sideOn').onchange = () => { showRects(); schedule(); };
+$('#aiFind').onclick = () => findFace(true);
+$('#aiGen').onclick = () => aiPicture(false);
+$('#aiEdit').onclick = () => aiPicture(true);
+{
+  const c = AI.loadCfg(), map = { aiBase: 'base', aiKey: 'key', aiImg: 'imgModel', aiVis: 'visModel' };
+  for (const [id, k] of Object.entries(map)) { $('#' + id).value = c[k]; $('#' + id).onchange = () => AI.saveCfg(cfg()); }
+}
 document.querySelectorAll('#view button').forEach((b) => (b.onclick = () => {
   S.view = b.dataset.view; document.querySelectorAll('#view button').forEach((x) => x.classList.toggle('on', x === b)); paint();
 }));
