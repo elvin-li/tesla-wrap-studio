@@ -170,11 +170,12 @@ function bilinear(src, u, v, out, o, clamp) {
 
 // Face mode: face on the hood (turned to read from the front), the subject standing upright on each side's
 // doors (head toward the roof), a soft blurred copy of the picture everywhere else.
-// opts: face / subject = [x0,y0,x1,y1] in 0..1, faceSize, faceCrop, sideOn, sideZoom, sideShift, bgDark, feather
+// opts: face / subject = [x0,y0,x1,y1] in 0..1, faceSize, faceCrop, sideOn, sideZoom, sideShift, bgDark, feather,
+//       cut (use src.alpha = person mask {w,h,data} so only the person is drawn on the doors)
 function faceSampler(T, src, o, px) {
   const { W, H } = T, Z = zones(T), lab = Z?.lab;
   const bsrc = Z ? small(src) : src, bgS = Math.max(W / bsrc.w, H / bsrc.h), dark = Z ? 1 - o.bgDark : 1;
-  const fg = new Float32Array(3), fe = Math.max(0.02, o.feather);
+  const fg = new Float32Array(3), fe = Math.max(0.02, o.feather), cut = o.cut ? src.alpha : null;
   const f = o.face || [0.32, 0.1, 0.68, 0.5];
   const fcx = (f[0] + f[2]) / 2 * src.w, fcy = (f[1] + f[3]) / 2 * src.h;
   const fw = Math.max(4, (f[2] - f[0]) / 2 * src.w * o.faceCrop), fh = Math.max(4, (f[3] - f[1]) / 2 * src.h * o.faceCrop);
@@ -205,6 +206,10 @@ function faceSampler(T, src, o, px) {
       const u = q.ucx + q.dir * dy / q.s, v = q.vcy - q.dir * dx / q.s;           // image top -> toward the roof
       const ea = (u - q.u0) / q.sw, eb = (v - q.v0) / q.sh, edge = Math.min(ea, 1 - ea, eb, 1 - eb);
       a = smooth(0, fe * 0.6, edge);
+      if (a > 0 && cut) {                                                         // person only, no box around it
+        const ax = Math.min(cut.w - 1, Math.max(0, (u / src.w * cut.w) | 0)), ay = Math.min(cut.h - 1, Math.max(0, (v / src.h * cut.h) | 0));
+        a *= smooth(0.25, 0.75, cut.data[ay * cut.w + ax]);
+      }
       if (a > 0) bilinear(src, u, v, fg, 0, true);
       break;
     }

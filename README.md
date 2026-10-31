@@ -13,13 +13,14 @@ Drop in a picture, get a ready-to-use Tesla Paint Shop wrap.
 - 五种风格：**环绕**（风景绕车一圈，地平线等高）、**海报**、**对称**、**平铺**、**车头脸**（脸放上引擎盖，人物立在两侧车门，其余是柔化背景）。
 - 实时预览，可调地平线、缩放、旋转、亮度、色彩。
 - 导出自动满足特斯拉要求：PNG、≤1024 px、< 1 MB、模板外纯黑、文件名 ≤ 30 字符。
-- 可选 **AI**：填你自己的 OpenAI 格式接口（OpenAI、硅基流动、自建代理等），就能按文字生成新图、按文字改图、自动找脸。Key 只存在本机浏览器。
-- 不用 AI 时，图片只在你的浏览器里处理，不会上传。用 AI 时，文字和图片会发给你填的接口。
+- **免费 AI，打开就能用**：写一句话生成新图（Pollinations，免注册，约每 45 秒一张）；找脸和抠人用 MediaPipe 在浏览器里完成，图片不上传。
+- 也可在“接口设置”换成你自己的 OpenAI 格式接口（OpenAI、硅基流动、自建代理），多出“按文字改图”。Key 只存在本机浏览器。
+- 生成新图时，你写的文字会发给所选的 AI 服务；你自己的图片只在浏览器里处理。
 
 All 12 official models · 5 styles (wrap-around, poster, mirror, tile, face-on-hood) · live preview ·
 export always meets Tesla's rules (PNG, ≤1024 px, < 1 MB, black outside the template, name ≤ 30 chars) ·
-optional AI with your own OpenAI-compatible API: make a picture from text, edit a picture, find the face ·
-without AI everything runs locally in your browser.
+free AI built in (text to picture via Pollinations, no sign-up; face finding and cut-out run in the browser with MediaPipe) ·
+or plug in your own OpenAI-compatible API for picture editing. Your own pictures never leave the browser.
 
 ## 放进车里 / Install in the car
 

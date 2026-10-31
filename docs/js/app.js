@@ -27,20 +27,25 @@ const I18N = {
     'c.size': 'Size', 'c.bytes': 'Under 1 MB', 'c.name': 'Name ≤ 30', 'c.black': 'Outside is black',
     'm.face': 'Face', 'm.face.s': 'face on hood',
     'f.tip': 'Click the face in the picture to put it on the hood. Red = hood, blue = doors.',
-    'f.ai': 'Find the face with AI', 'f.side': 'Figure on the doors',
-    'ai.t': 'AI create / edit', 'ai.s': 'uses your own API', 'ai.ph': 'One line, e.g. cyberpunk city at night, neon, rain',
+    'f.ai': 'Find the face again', 'f.side': 'Figure on the doors', 'f.cut': 'Person only (cut out)',
+    'ai.t': 'AI picture', 'ai.s': 'free, no sign-up', 'ai.ph': 'One line, e.g. cyberpunk city at night, neon, rain',
+    'ai.prov': 'Service', 'ai.pFree': 'Free (Pollinations)', 'ai.pCustom': 'My own API (OpenAI style)',
+    'ai.free': 'Free: about 1 picture every 45 s. Your words go to Pollinations. Face finding runs in your browser.',
+    'ai.stop': 'Stop', 'ai.ideas': 'Ideas:',
+    'st.wait': 'Free limit, waiting', 'st.stopped': 'Stopped', 'st.freeBusy': 'The free service is busy. Try again in a minute.',
     'ai.gen': 'Make a new picture', 'ai.edit': 'Change this picture', 'ai.cfg': 'API settings', 'ai.base': 'API URL',
     'ai.img': 'Image model', 'ai.vis': 'Vision model',
     'ai.note': 'Works with OpenAI-style APIs (OpenAI, SiliconFlow, your own proxy…). The key stays in this browser only. When you use AI, your text and picture go to that API and it bills you.',
     faceSize: 'Face size', faceCrop: 'Face framing', sideZoom: 'Door figure', sideShift: 'Front / back', bgDark: 'Background dim', feather: 'Soft edge',
-    'st.ai': 'AI is drawing… (10–60 s)', 'st.aiFind': 'AI is looking for the face…', 'st.noKey': 'Fill in the API key first',
+    'st.ai': 'AI is drawing… (10–60 s)', 'st.aiFind': 'Looking for the face…', 'st.noKey': 'Fill in the API key first',
     'st.noPrompt': 'Write a line first', 'st.noSrc': 'Add a picture first', 'st.noFace': 'This car has a different layout. Face style is not ready for it.',
     'st.found': 'Face found', 'st.notFound': 'No face found. Click the face yourself.', 'st.aiErr': 'AI failed: ',
     'st.urlBlocked': 'The API gave a link the browser may not read. Try a model that returns b64_json.',
   },
   zh: {
     faceSize: '脸大小', faceCrop: '脸取景', sideZoom: '车门人物', sideShift: '前后移', bgDark: '背景压暗', feather: '边缘柔和',
-    'st.ai': 'AI 正在画…（10–60 秒）', 'st.aiFind': 'AI 正在找脸…', 'st.noKey': '先在“接口设置”里填 API Key',
+    'st.ai': 'AI 正在画…（10–60 秒）', 'st.aiFind': '正在找脸…', 'st.noKey': '先在“接口设置”里填 API Key',
+    'st.wait': '免费额度排队中，还要', 'st.stopped': '已停止', 'st.freeBusy': '免费服务太忙，过一分钟再试。',
     'st.noPrompt': '先写一句话', 'st.noSrc': '先放一张图片', 'st.noFace': '这个车型布局不同，暂不支持车头脸。',
     'st.found': '找到脸了', 'st.notFound': '没找到脸，请在小图上点一下脸。', 'st.aiErr': 'AI 出错：',
     'st.urlBlocked': '接口返回的图片链接浏览器读不了，换个能返回 b64_json 的模型。',
@@ -149,7 +154,7 @@ async function setSource(blobOrUrl, name) {
   $('#faceImg').src = url; showRects();
   if (!$('#fname').dataset.touched) $('#fname').value = defaultName();
   $('#empty').hidden = true; schedule();
-  findFace(false);
+  if (S.mode === 'face') findFace(false);
 }
 
 // ---------- face: guess / built-in finder / AI / click ------------------------------------------
@@ -162,56 +167,85 @@ function showRects() {
   put($('#faceRect'), S.src && S.face);
   put($('#subjRect'), S.src && $('#sideOn').checked && S.subject);
 }
-async function findFace(useAI) {
+// auto: free finder in the browser first; the paid API is used only when the user asks (button) and has a key.
+async function findFace(useApi) {
   if (!S.src) return;
-  const src = S.src;
-  if (!useAI) {
-    const f = await AI.localFace(S.im, S.im.naturalWidth, S.im.naturalHeight);
-    if (f && S.src === src && S.faceFrom === 'guess') { S.face = f; S.faceFrom = 'local'; showRects(); schedule(); }
-    if (S.mode === 'face' && S.faceFrom === 'guess' && AI.ready(cfg())) return findFace(true);   // auto: one call per picture
-    return;
-  }
-  const c = cfg(); if (!AI.ready(c)) { openCfg(); return setStatus('st.noKey'); }
+  const src = S.src, c = cfg();
+  if (useApi && !(AI.isCustom(c) && AI.ready(c))) useApi = false;
   aiBusy(true); setStatus('st.aiFind');
   try {
-    const N = 1000, k = N / Math.max(src.w, src.h), dw = src.w * k, dh = src.h * k, ox = (N - dw) / 2, oy = (N - dh) / 2;
-    const cv = new OffscreenCanvas(N, N), x = cv.getContext('2d');
-    x.fillStyle = '#000'; x.fillRect(0, 0, N, N); x.drawImage(S.im, ox, oy, dw, dh);
-    const url = await blobToDataUrl(await cv.convertToBlob({ type: 'image/jpeg', quality: 0.85 }));
-    const r = await AI.locate(c, url, N, N);
-    const back = (b) => b && [(b[0] * N - ox) / dw, (b[1] * N - oy) / dh, (b[2] * N - ox) / dw, (b[3] * N - oy) / dh].map((v) => Math.min(1, Math.max(0, v)));
-    if (S.src !== src) return;
-    S.faceFrom = 'ai';
-    if (r.subject) S.subject = back(r.subject);
-    if (r.face) { S.face = back(r.face); setStatus('st.found'); } else setStatus('st.notFound');
+    if (!useApi) {
+      src.looked = true;
+      const r = await AI.localFind(S.im);
+      if (S.src !== src) return;
+      if (r.alpha) src.alpha = r.alpha;
+      if (r.subject) S.subject = r.subject;
+      if (r.face && S.faceFrom !== 'click') { S.face = r.face; S.faceFrom = 'local'; }
+      setStatus(r.face ? 'st.found' : 'st.notFound');
+    } else {
+      const N = 1000, k = N / Math.max(src.w, src.h), dw = src.w * k, dh = src.h * k, ox = (N - dw) / 2, oy = (N - dh) / 2;
+      const cv = new OffscreenCanvas(N, N), x = cv.getContext('2d');
+      x.fillStyle = '#000'; x.fillRect(0, 0, N, N); x.drawImage(S.im, ox, oy, dw, dh);
+      const url = await blobToDataUrl(await cv.convertToBlob({ type: 'image/jpeg', quality: 0.85 }));
+      const r = await AI.locate(c, url, N, N);
+      const back = (b) => b && [(b[0] * N - ox) / dw, (b[1] * N - oy) / dh, (b[2] * N - ox) / dw, (b[3] * N - oy) / dh].map((v) => Math.min(1, Math.max(0, v)));
+      if (S.src !== src) return;
+      if (r.subject) S.subject = back(r.subject);
+      if (r.face) { S.face = back(r.face); S.faceFrom = 'ai'; setStatus('st.found'); } else setStatus('st.notFound');
+    }
     showRects(); schedule();
-  } catch (e) { console.error(e); setStatus('st.aiErr', e.message); S.faceFrom = 'tried'; }
-  aiBusy(false);
+  } catch (e) { console.error(e); if (S.src === src) setStatus('st.aiErr', e.message); }
+  finally { aiBusy(false); }
 }
 const blobToDataUrl = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
 
 // ---------- AI picture ------------------------------------------------------------------------------
-const cfg = () => ({ base: $('#aiBase').value || 'https://api.openai.com/v1', key: $('#aiKey').value, imgModel: $('#aiImg').value || 'gpt-image-1', visModel: $('#aiVis').value || 'gpt-4o-mini' });
+const cfg = () => ({
+  provider: $('#aiProv').value, base: $('#aiBase').value || 'https://api.openai.com/v1', key: $('#aiKey').value,
+  imgModel: $('#aiImg').value || 'gpt-image-1', visModel: $('#aiVis').value || 'gpt-4o-mini',
+});
+function syncProvider() {
+  const custom = $('#aiProv').value === 'custom';
+  $('#aiCustom').hidden = !custom;
+  $('#aiEdit').hidden = !custom;
+  $('#aiFree').hidden = custom;
+}
 function openCfg() { $('#ai').open = true; $('#aiCfgBox').open = true; $('#aiKey').focus(); }
+let aiCtl = null;
 function aiBusy(on) { busy(on); ['#aiGen', '#aiEdit', '#aiFind'].forEach((s) => ($(s).disabled = on)); }
 async function aiPicture(editing) {
   const c = cfg(), prompt = $('#aiPrompt').value.trim();
   if (!AI.ready(c)) { openCfg(); return setStatus('st.noKey'); }
   if (!prompt) { $('#aiPrompt').focus(); return setStatus('st.noPrompt'); }
   if (editing && !S.src) return setStatus('st.noSrc');
-  aiBusy(true); setStatus('st.ai');
+  aiBusy(true); setStatus('st.ai'); $('#aiStop').hidden = false;
+  aiCtl = new AbortController();
   try {
     let blob;
     if (editing) {
       const cv = new OffscreenCanvas(S.src.w, S.src.h);
       cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(S.src.data), S.src.w, S.src.h), 0, 0);
       blob = await AI.edit(c, await cv.convertToBlob({ type: 'image/png' }), prompt);
-    } else blob = await AI.generate(c, prompt);
-    aiBusy(false);
+    } else blob = await AI.generate(c, prompt, { face: S.mode === 'face', signal: aiCtl.signal, onWait: (s) => (s ? setStatus('st.wait', ` ${s}s`) : setStatus('st.ai')) });
+    aiBusy(false); $('#aiStop').hidden = true;
+    addHistory(blob);
     await setSource(blob, 'ai_' + prompt.normalize('NFKD').replace(/[^A-Za-z0-9]+/g, '_').slice(0, 14));
   } catch (e) {
-    console.error(e); aiBusy(false);
-    e.message === 'image-url-blocked' ? setStatus('st.urlBlocked') : setStatus('st.aiErr', e.message);
+    console.error(e); aiBusy(false); $('#aiStop').hidden = true;
+    if (e.name === 'AbortError') setStatus('st.stopped');
+    else if (e.message === 'image-url-blocked') setStatus('st.urlBlocked');
+    else if (e.message === 'free-busy') setStatus('st.freeBusy');
+    else setStatus('st.aiErr', e.message);
+  }
+}
+// last AI pictures, click to reuse (kept in memory only)
+const hist = [];
+function addHistory(blob) {
+  const url = URL.createObjectURL(blob); hist.unshift({ url, blob }); if (hist.length > 6) URL.revokeObjectURL(hist.pop().url);
+  const box = $('#aiHist'); box.hidden = false; box.innerHTML = '';
+  for (const h of hist) {
+    const b = document.createElement('button'); b.type = 'button'; b.innerHTML = `<img src="${h.url}" alt="">`;
+    b.onclick = () => setSource(h.blob, 'ai'); box.appendChild(b);
   }
 }
 function defaultName() {
@@ -236,12 +270,12 @@ function draw() {
     horizonRow: Math.max(0, Math.min(S.src.h - 1, S.autoHorizon + val('horizonShift') * S.src.h)),
   }); else if (S.mode === 'face') Object.assign(o, {
     face: S.face, subject: S.subject, sideOn: $('#sideOn').checked, faceSize: val('faceSize'), faceCrop: val('faceCrop'),
-    sideZoom: val('sideZoom'), sideShift: val('sideShift'), bgDark: val('bgDark'), feather: val('feather'),
+    sideZoom: val('sideZoom'), sideShift: val('sideShift'), bgDark: val('bgDark'), feather: val('feather'), cut: $('#cutOn').checked,
   }); else Object.assign(o, { zoom: val('zoom'), panX: val('panX'), panY: val('panY'), angle: val('angle') });
   S.rgba = render(S.T, S.src, o);
   paint(); $('#checks').innerHTML = '';
   if (S.mode === 'face' && !zones(S.T)) setStatus('st.noFace');
-  else if (!['st.ai', 'st.aiFind', 'st.aiErr', 'st.urlBlocked', 'st.found', 'st.notFound', 'st.noKey', 'st.noPrompt', 'st.noSrc'].includes(lastStatus)) setStatus('st.ready');
+  else if (!lastStatus.startsWith('st.') || ['st.ready', 'st.render', 'st.loadTpl', 'st.noFace'].includes(lastStatus)) setStatus('st.ready');
 }
 function paint() {
   const c = $('#out'), x = c.getContext('2d');
@@ -294,7 +328,7 @@ document.querySelectorAll('[data-demo]').forEach((b) => (b.onclick = () => setSo
 document.querySelectorAll('.mode').forEach((b) => (b.onclick = () => {
   S.mode = b.dataset.mode; document.querySelectorAll('.mode').forEach((x) => x.classList.toggle('on', x === b)); buildSliders();
   $('#faceBox').hidden = S.mode !== 'face'; setStatus('st.ready'); schedule();
-  if (S.mode === 'face' && S.faceFrom === 'guess' && AI.ready(cfg())) findFace(true);
+  if (S.mode === 'face' && S.src && !S.src.looked) findFace(false);
 }));
 $('#facePick').onclick = (e) => {
   if (!S.src) return;
@@ -306,9 +340,14 @@ $('#sideOn').onchange = () => { showRects(); schedule(); };
 $('#aiFind').onclick = () => findFace(true);
 $('#aiGen').onclick = () => aiPicture(false);
 $('#aiEdit').onclick = () => aiPicture(true);
+$('#aiStop').onclick = () => aiCtl?.abort();
+$('#cutOn').onchange = schedule;
+document.querySelectorAll('[data-idea]').forEach((b) => (b.onclick = () => { $('#aiPrompt').value = b.textContent; $('#aiPrompt').focus(); }));
+$('#aiPrompt').onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); aiPicture(false); } };
 {
-  const c = AI.loadCfg(), map = { aiBase: 'base', aiKey: 'key', aiImg: 'imgModel', aiVis: 'visModel' };
-  for (const [id, k] of Object.entries(map)) { $('#' + id).value = c[k]; $('#' + id).onchange = () => AI.saveCfg(cfg()); }
+  const c = AI.loadCfg(), map = { aiProv: 'provider', aiBase: 'base', aiKey: 'key', aiImg: 'imgModel', aiVis: 'visModel' };
+  for (const [id, k] of Object.entries(map)) { $('#' + id).value = c[k]; $('#' + id).onchange = () => { AI.saveCfg(cfg()); syncProvider(); }; }
+  syncProvider();
 }
 document.querySelectorAll('#view button').forEach((b) => (b.onclick = () => {
   S.view = b.dataset.view; document.querySelectorAll('#view button').forEach((x) => x.classList.toggle('on', x === b)); paint();

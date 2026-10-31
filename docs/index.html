@@ -25,7 +25,7 @@
 
 <section class="hero">
   <h1 data-i18n="hero.title">一张图，变成你的特斯拉车衣</h1>
-  <p data-i18n="hero.sub">拖进图片，自动贴满整辆车，还能把脸放上车头。全部 12 个官方车型。不用 AI 时，图片只在你的浏览器里处理。</p>
+  <p data-i18n="hero.sub">拖进图片，自动贴满整辆车，还能把脸放上车头。全部 12 个官方车型。自带免费 AI 生图。</p>
 </section>
 
 <main class="studio">
@@ -53,20 +53,35 @@
         <button class="chip" data-demo="assets/demo_ink.jpg" data-i18n="demo.3">水墨山</button>
       </div>
 
-      <details class="ai" id="ai">
-        <summary><i class="ic ic-ai"></i><b data-i18n="ai.t">AI 生图 / 改图</b><small data-i18n="ai.s">用你自己的大模型接口</small></summary>
+      <details class="ai" id="ai" open>
+        <summary><i class="ic ic-ai"></i><b data-i18n="ai.t">AI 生图</b><small data-i18n="ai.s">免费，不用注册</small></summary>
         <textarea id="aiPrompt" rows="3" data-i18n-ph="ai.ph" placeholder="写一句话，比如：赛博朋克城市夜景，霓虹灯，下雨"></textarea>
+        <div class="ideas"><span data-i18n="ai.ideas">灵感：</span>
+          <button class="chip" type="button" data-idea>星空银河，紫色星云</button>
+          <button class="chip" type="button" data-idea>浮世绘巨浪</button>
+          <button class="chip" type="button" data-idea>熔岩与冰川</button>
+          <button class="chip" type="button" data-idea>赛博朋克城市夜景，霓虹灯</button>
+        </div>
         <div class="ai-row">
           <button id="aiGen" class="chip strong" type="button" data-i18n="ai.gen">按文字生成新图</button>
-          <button id="aiEdit" class="chip" type="button" data-i18n="ai.edit">按文字改这张图</button>
+          <button id="aiEdit" class="chip" type="button" data-i18n="ai.edit" hidden>按文字改这张图</button>
+          <button id="aiStop" class="chip" type="button" data-i18n="ai.stop" hidden>停止</button>
         </div>
+        <div id="aiHist" class="ai-hist" hidden></div>
+        <p id="aiFree" class="fine" data-i18n="ai.free">免费：大约每 45 秒一张。你写的文字会发给 Pollinations。找脸在你的浏览器里完成。</p>
         <details class="ai-cfg" id="aiCfgBox">
           <summary data-i18n="ai.cfg">接口设置</summary>
-          <label><span data-i18n="ai.base">接口地址</span><input id="aiBase" spellcheck="false" placeholder="https://api.openai.com/v1"></label>
-          <label><span>API Key</span><input id="aiKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-…"></label>
-          <label><span data-i18n="ai.img">生图模型</span><input id="aiImg" spellcheck="false" placeholder="gpt-image-1"></label>
-          <label><span data-i18n="ai.vis">识图模型</span><input id="aiVis" spellcheck="false" placeholder="gpt-4o-mini"></label>
-          <p class="fine" data-i18n="ai.note">支持 OpenAI 格式的接口（OpenAI、硅基流动、自建代理等）。Key 只存在这台电脑的浏览器里。用 AI 时，你的文字和图片会发给你填的接口，会按它的价格扣费。</p>
+          <label><span data-i18n="ai.prov">服务</span><select id="aiProv">
+            <option value="free" data-i18n="ai.pFree">免费（Pollinations）</option>
+            <option value="custom" data-i18n="ai.pCustom">我自己的接口（OpenAI 格式）</option>
+          </select></label>
+          <div id="aiCustom" hidden>
+            <label><span data-i18n="ai.base">接口地址</span><input id="aiBase" spellcheck="false" placeholder="https://api.openai.com/v1"></label>
+            <label><span>API Key</span><input id="aiKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-…"></label>
+            <label><span data-i18n="ai.img">生图模型</span><input id="aiImg" spellcheck="false" placeholder="gpt-image-1"></label>
+            <label><span data-i18n="ai.vis">识图模型</span><input id="aiVis" spellcheck="false" placeholder="gpt-4o-mini"></label>
+            <p class="fine" data-i18n="ai.note">支持 OpenAI 格式的接口（OpenAI、硅基流动、自建代理等）。Key 只存在这台电脑的浏览器里。用 AI 时，你的文字和图片会发给你填的接口，会按它的价格扣费。</p>
+          </div>
         </details>
       </details>
     </section>
@@ -87,8 +102,9 @@
         </div>
         <div class="facetools">
           <p data-i18n="f.tip">点图片里的脸，车头就换成它。红框 = 车头，蓝框 = 车门。</p>
-          <button id="aiFind" class="chip strong" type="button" data-i18n="f.ai">AI 自动找脸</button>
+          <button id="aiFind" class="chip" type="button" data-i18n="f.ai">重新找脸</button>
           <label class="toggle"><input type="checkbox" id="sideOn" checked><span></span><b data-i18n="f.side">车门放人物</b></label>
+          <label class="toggle"><input type="checkbox" id="cutOn" checked><span></span><b data-i18n="f.cut">只要人（抠掉背景）</b></label>
         </div>
       </div>
     </section>
