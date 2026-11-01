@@ -1,10 +1,11 @@
 // AI helpers.
-//  free (default): pictures from Pollinations (no key, ~1 picture / 45 s per visitor), face + person finding
-//                  with MediaPipe running inside the browser (nothing is uploaded).
+//  free (default): several free picture services start at the same time. The first picture wins; pictures
+//                  that land later are handed to onExtra (the page shows them as extra choices).
+//                  Face + person finding runs with MediaPipe in a Web Worker (nothing is uploaded).
 //  custom        : any OpenAI-compatible API the user fills in. The key is kept only in this browser.
 
 const STORE = 'ai.cfg';
-const DEFAULTS = { provider: 'free', base: 'https://api.openai.com/v1', key: '', imgModel: 'gpt-image-1', visModel: 'gpt-4o-mini' };
+const DEFAULTS = { provider: 'free', base: 'https://api.openai.com/v1', key: '', imgModel: 'gpt-image-1', visModel: 'gpt-4o-mini', count: 1 };
 
 export const loadCfg = () => ({ ...DEFAULTS, ...JSON.parse(localStorage.getItem(STORE) || '{}') });
 export const saveCfg = (c) => localStorage.setItem(STORE, JSON.stringify(c));
@@ -13,9 +14,11 @@ export const ready = (c) => !isCustom(c) || !!(c.key && c.base);
 export const canEdit = (c) => isCustom(c) && ready(c);
 
 const endpoint = (c, p) => c.base.trim().replace(/\/+$/, '') + p;
+const abortErr = () => new DOMException('stop', 'AbortError');
 const sleep = (ms, signal) => new Promise((res, rej) => {
+  if (signal?.aborted) return rej(abortErr());
   const t = setTimeout(res, ms);
-  signal?.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('stop', 'AbortError')); }, { once: true });
+  signal?.addEventListener('abort', () => { clearTimeout(t); rej(abortErr()); }, { once: true });
 });
 
 async function call(c, path, init) {
@@ -25,10 +28,10 @@ async function call(c, path, init) {
   if (!r.ok) throw new Error(j.error?.message || j.message || `HTTP ${r.status}`);
   return j;
 }
-function b64Blob(b64) {
+function b64Blob(b64, type = 'image/png') {
   const bin = atob(b64), u = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
-  return new Blob([u], { type: 'image/png' });
+  return new Blob([u], { type });
 }
 async function imageOut(j) {
   const d = j.data?.[0] || j.images?.[0];
@@ -45,32 +48,59 @@ const sizeFor = (m) => (/dall-e-3/i.test(m) ? '1792x1024' : /gpt-image/i.test(m)
 const WRAP_HINT = ', vivid colour, sharp detail, no text, no watermark';
 const FACE_HINT = ', one person, upper body, face clearly visible and lit, looking at the camera';
 
-// ---------- free pictures ------------------------------------------------------------------------
+// ---------- free services --------------------------------------------------------------------------
 const POLL_IMG = 'https://image.pollinations.ai/prompt/';
 const POLL_TXT = 'https://text.pollinations.ai/openai';
+const FLUX = 'https://black-forest-labs-flux-1-schnell.hf.space';    // Hugging Face Space, ZeroGPU
+const HORDE = 'https://aihorde.net/api/v2';                         // AI Horde, volunteer GPUs
+const AGENT = 'wrap-studio:2:github.com/elvin-li/tesla-wrap-studio';
+export const FREE_SERVICES = ['FLUX.1-schnell (Hugging Face)', 'Pollinations', 'AI Horde'];
 
 // Chinese (or any) line -> short English image prompt. Falls back to the raw text.
 async function englishPrompt(text, signal) {
   if (/^[\x00-\x7f]*$/.test(text)) return text;
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 8000);
+  const stop = () => ctl.abort(); signal?.addEventListener('abort', stop, { once: true });
   try {
-    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 15000);
-    signal?.addEventListener('abort', () => ctl.abort(), { once: true });
     const r = await fetch(POLL_TXT, {
       method: 'POST', signal: ctl.signal, headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model: 'openai', messages: [
         { role: 'system', content: 'Translate the user text into one short English prompt for an image model. Reply with the prompt only.' },
         { role: 'user', content: text }] }),
     });
-    clearTimeout(t);
     const out = (await r.json()).choices?.[0]?.message?.content?.trim();
     return out && out.length < 400 ? out.replace(/^["']|["']$/g, '') : text;
-  } catch (e) { if (signal?.aborted) throw e; return text; }
+  } catch (e) { if (signal?.aborted) throw abortErr(); return text; }
+  finally { clearTimeout(t); signal?.removeEventListener('abort', stop); }
 }
 
-// onWait(seconds) is called while we wait for the free limit to reset.
-async function freeGenerate(prompt, { signal, onWait, seed, face } = {}) {
-  const p = (await englishPrompt(prompt, signal)) + (face ? FACE_HINT : '') + WRAP_HINT;
-  const url = `${POLL_IMG}${encodeURIComponent(p)}?width=1536&height=960&nologo=true&model=flux&seed=${seed ?? (Math.random() * 1e9) | 0}`;
+// FLUX.1-schnell on Hugging Face: about 3 s, no key. Its free GPU time is small (about 1 picture a day per
+// visitor), so after a refusal it is skipped for an hour.
+const FLUX_PAUSE = 'ai.fluxPause';
+async function flux(prompt, { signal }) {
+  if (Date.now() < +(localStorage.getItem(FLUX_PAUSE) || 0)) throw new Error('flux-paused');
+  const r = await fetch(`${FLUX}/gradio_api/call/infer`, {
+    method: 'POST', signal, headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ data: [prompt, 0, true, 1536, 960, 4] }),
+  });
+  if (!r.ok) throw new Error(`flux HTTP ${r.status}`);
+  const { event_id: ev } = await r.json();
+  const sse = await (await fetch(`${FLUX}/gradio_api/call/infer/${ev}`, { signal })).text();
+  const kind = [...sse.matchAll(/^event:\s*(\w+)/gm)].map((m) => m[1]).pop();
+  const data = [...sse.matchAll(/^data:\s*(.*)$/gm)].map((m) => m[1]).pop();
+  if (kind !== 'complete') {
+    localStorage.setItem(FLUX_PAUSE, String(Date.now() + 3600e3));
+    throw new Error('flux-refused');
+  }
+  const file = JSON.parse(data)?.[0];
+  const img = await fetch(file?.url || `${FLUX}/gradio_api/file=${file?.path}`, { signal });
+  if (!img.ok) throw new Error(`flux file HTTP ${img.status}`);
+  return img.blob();
+}
+
+// Pollinations: no key, about 1 picture / 45 s per visitor; waits out its limit (onWait = seconds left).
+async function pollinations(prompt, { signal, onWait }) {
+  const url = `${POLL_IMG}${encodeURIComponent(prompt)}?width=1536&height=960&nologo=true&model=flux&seed=${(Math.random() * 1e9) | 0}`;
   for (let tries = 0; tries < 12; tries++) {
     const r = await fetch(url, { signal });
     if (r.ok && (r.headers.get('content-type') || '').startsWith('image/')) return r.blob();
@@ -83,12 +113,76 @@ async function freeGenerate(prompt, { signal, onWait, seed, face } = {}) {
   throw new Error('free-busy');
 }
 
+// AI Horde: volunteer GPUs, no key, slow queue. Anonymous jobs must stay under 576x576 pixels of area.
+async function horde(prompt, { signal }) {
+  const head = { apikey: '0000000000', 'Client-Agent': AGENT, 'Content-Type': 'application/json' };
+  const r = await fetch(`${HORDE}/generate/async`, {
+    method: 'POST', signal, headers: head,
+    body: JSON.stringify({ prompt: `${prompt} ### text, watermark, blurry`, nsfw: false, censor_nsfw: true, r2: false, shared: false,
+      slow_workers: true, params: { width: 704, height: 448, steps: 20, n: 1, sampler_name: 'k_euler_a', cfg_scale: 6 } }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.id) throw new Error(j.message || `horde HTTP ${r.status}`);
+  const cancel = () => fetch(`${HORDE}/generate/status/${j.id}`, { method: 'DELETE', headers: { 'Client-Agent': AGENT }, keepalive: true }).catch(() => {});
+  signal?.addEventListener('abort', cancel, { once: true });
+  try {
+    for (let k = 0; k < 120; k++) {
+      await sleep(5000, signal);
+      const c = await (await fetch(`${HORDE}/generate/check/${j.id}`, { signal, headers: { 'Client-Agent': AGENT } })).json();
+      if (c.faulted || c.is_possible === false) throw new Error('horde-failed');
+      if (c.done) break;
+    }
+    const s = await (await fetch(`${HORDE}/generate/status/${j.id}`, { signal, headers: { 'Client-Agent': AGENT } })).json();
+    const g = s.generations?.[0];
+    if (!g?.img || g.censored) throw new Error('horde-empty');
+    return g.img.startsWith('http') ? (await fetch(g.img, { signal })).blob() : b64Blob(g.img, 'image/webp');
+  } finally { signal?.removeEventListener('abort', cancel); }
+}
+
+// Race: FLUX + Pollinations start together; AI Horde joins after 25 s without a picture, or when both fail.
+async function freeGenerate(prompt, { signal, onWait, onExtra, face } = {}) {
+  if (face) preload();                                    // face models load while the picture is made
+  const p = (await englishPrompt(prompt, signal)) + (face ? FACE_HINT : '') + WRAP_HINT;
+  return new Promise((resolve, reject) => {
+    let won = false, running = 0, hordeOn = false, timer = 0;
+    const errors = [];
+    const done = (name) => (blob) => {
+      if (signal?.aborted) return;
+      blob.source = name;
+      if (!won) { won = true; clearTimeout(timer); onWait?.(0); resolve(blob); } else onExtra?.(blob, name);
+    };
+    const failed = (name) => (e) => {
+      running--;
+      if (e?.name === 'AbortError') return;
+      errors.push(`${name}: ${e?.message || e}`);
+      if (!won && running === 0) { if (!hordeOn) startHorde(); else reject(new Error(errors.some((x) => /free-busy/.test(x)) ? 'free-busy' : errors.join('; '))); }
+    };
+    const run = (name, fn) => { running++; fn().then(done(name), failed(name)); };
+    function startHorde() {
+      if (hordeOn || won || signal?.aborted) return;
+      hordeOn = true; run('AI Horde', () => horde(p, { signal }));
+    }
+    signal?.addEventListener('abort', () => { clearTimeout(timer); if (!won) reject(abortErr()); }, { once: true });
+    run('FLUX', () => flux(p, { signal }));
+    run('Pollinations', () => pollinations(p, { signal, onWait: (s) => { if (!won) onWait?.(s); } }));
+    timer = setTimeout(startHorde, 25000);
+  });
+}
+
 // ---------- public: pictures ---------------------------------------------------------------------
-export async function generate(c, prompt, opt) {
+export async function generate(c, prompt, opt = {}) {
   if (!isCustom(c)) return freeGenerate(prompt, opt);
-  const body = { model: c.imgModel, prompt: prompt + (opt?.face ? FACE_HINT : '') + WRAP_HINT, n: 1, size: sizeFor(c.imgModel) };
-  if (/dall-e/i.test(c.imgModel)) body.response_format = 'b64_json';
-  return imageOut(await call(c, '/images/generations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }));
+  const body = JSON.stringify({ model: c.imgModel, prompt: prompt + (opt.face ? FACE_HINT : '') + WRAP_HINT, n: 1, size: sizeFor(c.imgModel),
+    ...(/dall-e/i.test(c.imgModel) ? { response_format: 'b64_json' } : {}) });
+  const one = () => call(c, '/images/generations', { method: 'POST', signal: opt.signal, headers: { 'Content-Type': 'application/json' }, body }).then(imageOut);
+  const n = Math.max(1, Math.min(4, +c.count || 1));
+  if (n === 1) return one();
+  // n requests at once: the first picture resolves, the others arrive through onExtra
+  return new Promise((resolve, reject) => {
+    let won = false, left = n; const errs = [];
+    for (let k = 0; k < n; k++) one().then((b) => { if (!won) { won = true; resolve(b); } else opt.onExtra?.(b, 'API'); },
+      (e) => { errs.push(e); if (--left === 0 && !won) reject(errs[0]); });
+  });
 }
 export async function edit(c, blob, prompt) {
   const fd = new FormData();
@@ -121,6 +215,35 @@ export async function locate(c, dataUrl, w, h) {
 }
 
 // ---------- free, in the browser: face + person cut-out (MediaPipe) ------------------------------
+// Runs in a Web Worker (ai-worker.js), so model loading and detection never block the page.
+// If the worker cannot start, the same code runs on the page instead.
+let worker = null, workerOk = true, seq = 0;
+const waits = new Map();
+function getWorker() {
+  if (!workerOk || typeof Worker !== 'function' || typeof OffscreenCanvas !== 'function') return null;
+  if (worker) return worker;
+  try {
+    worker = new Worker(new URL('./ai-worker.js', import.meta.url));        // classic worker: MediaPipe uses importScripts
+    worker.onmessage = ({ data: m }) => { const w = waits.get(m.id); if (!w) return; waits.delete(m.id); m.t === 'err' ? w.rej(new Error(m.msg)) : w.res(m); };
+    worker.onerror = (e) => { e.preventDefault?.(); dropWorker(new Error(e.message || 'ai worker failed')); };
+  } catch { workerOk = false; worker = null; }
+  return worker;
+}
+function dropWorker(err) {
+  workerOk = false; try { worker?.terminate(); } catch {} worker = null;
+  for (const w of waits.values()) w.rej(err); waits.clear();
+}
+const ask = (msg, transfer = []) => new Promise((res, rej) => {
+  const w = getWorker(); if (!w) return rej(new Error('no-worker'));
+  const id = ++seq; waits.set(id, { res, rej }); w.postMessage({ ...msg, id }, transfer);
+});
+
+// Start loading the face + person models in the background. Safe to call many times.
+let preloading = null;
+export function preload() {
+  return (preloading ??= ask({ t: 'preload' }).catch((e) => { console.warn('[ai] worker preload failed, using the page:', e); dropWorker(e); return mediapipe(); }));
+}
+
 const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
 const MODELS = 'https://storage.googleapis.com/mediapipe-models';
 let mpTasks = null;
@@ -138,31 +261,23 @@ function mediapipe() {
   })().catch((e) => { mpTasks = null; throw e; }));
 }
 
-// Returns { face:[x0,y0,x1,y1]|null, subject:[..]|null, alpha:{w,h,data}|null } (boxes in 0..1).
-export async function localFind(img) {
+// The picture is scaled exactly as before (max side 1024) and handed over as pixels.
+function inputPixels(img) {
   const W = img.naturalWidth || img.width, H = img.naturalHeight || img.height;
   const k = Math.min(1, 1024 / Math.max(W, H)), w = Math.round(W * k), h = Math.round(H * k);
-  const cv = document.createElement('canvas'); cv.width = w; cv.height = h; cv.getContext('2d').drawImage(img, 0, 0, w, h);
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const x = cv.getContext('2d', { willReadFrequently: true }); x.drawImage(img, 0, 0, w, h);
+  return { cv, data: x.getImageData(0, 0, w, h) };
+}
+
+// Returns { face:[x0,y0,x1,y1]|null, subject:[..]|null, alpha:{w,h,data}|null } (boxes in 0..1).
+export async function localFind(img) {
+  const { cv, data } = inputPixels(img);
+  if (getWorker()) {
+    try { const r = await ask({ t: 'find', img: data }, [data.data.buffer]); return { face: r.face, subject: r.subject, alpha: r.alpha }; }
+    catch (e) { console.warn('[ai] worker find failed, using the page:', e); dropWorker(e); }
+  }
   const { face: fd, seg } = await mediapipe();
-  const out = { face: null, subject: null, alpha: null };
-  if (fd) {
-    const ds = fd.detect(cv).detections || [];
-    const b = ds.map((d) => d.boundingBox).sort((p, q) => q.width * q.height - p.width * p.height)[0];
-    if (b) out.face = [b.originX / w, (b.originY - b.height * 0.28) / h, (b.originX + b.width) / w, (b.originY + b.height * 1.08) / h]
-      .map((v) => Math.min(1, Math.max(0, v)));
-  }
-  if (seg) {
-    const r = seg.segment(cv), m = r.confidenceMasks?.[0];
-    if (m) {
-      const data = m.getAsFloat32Array().slice(), mw = m.width, mh = m.height;
-      r.close?.();
-      let n = 0, x0 = mw, y0 = mh, x1 = 0, y1 = 0;
-      for (let y = 0; y < mh; y++) for (let x = 0; x < mw; x++) if (data[y * mw + x] > 0.5) {
-        n++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
-      }
-      const share = n / (mw * mh);
-      if (share > 0.03 && share < 0.8) { out.alpha = { w: mw, h: mh, data }; out.subject = [x0 / mw, y0 / mh, (x1 + 1) / mw, (y1 + 1) / mh]; }
-    }
-  }
-  return out;
+  const { boxes } = await import('./ai-boxes.js');
+  return boxes(fd ? fd.detect(cv).detections || [] : [], seg ? seg.segment(cv) : null, cv.width, cv.height);
 }
