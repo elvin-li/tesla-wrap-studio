@@ -307,7 +307,9 @@ const ask = (msg, transfer = []) => new Promise((res, rej) => {
 // Start loading the face + person models in the background. Safe to call many times.
 let preloading = null;
 export function preload() {
-  return (preloading ??= ask({ t: 'preload' }).catch((e) => { console.warn('[ai] worker preload failed, using the page:', e); dropWorker(e); return mediapipe(); }));
+  return (preloading ??= ask({ t: 'preload' })
+    .catch((e) => { console.warn('[ai] worker preload failed, using the page:', e); dropWorker(e); return mediapipe(); })
+    .catch((e) => { preloading = null; console.warn('[ai] face models not loaded (offline?), will try again:', e); }));
 }
 
 const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
