@@ -10,19 +10,24 @@ Drop in a picture, get a ready-to-use Tesla Paint Shop wrap.
 ## 网页版 / Web app
 
 - 支持全部 12 个官方车型：Model 3 / Y / Y L / S / X / Cybertruck。
-- 五种风格：**环绕**（风景绕车一圈，地平线等高）、**海报**、**对称**、**平铺**、**车头脸**（脸放上引擎盖，人物立在两侧车门，其余是柔化背景）。
+- 五种风格：**环绕**（风景绕车一圈，地平线等高）、**海报**、**对称**、**平铺**、**车头脸**（脸放上引擎盖，人物立在两侧车门，其余是柔化背景；Cybertruck 也支持）。
 - 实时预览，可调地平线、缩放、旋转、亮度、色彩。
+- **3D 预览**：把贴膜包到一个近似车身上，拖动旋转、滚轮缩放，一键看斜前、正面、侧面、背面、车顶，也能自动转。车身形状按官方模板算出来，是近似形状，不是特斯拉的 3D 模型。3D 代码只在打开时才加载。
 - 导出自动满足特斯拉要求：PNG、≤1024 px、< 1 MB、模板外纯黑、文件名 ≤ 30 字符。
 - **免费 AI，打开就能用**：写一句话，FLUX（Hugging Face）和 Pollinations 同时开画，25 秒还没好再加 AI Horde；谁先画好用谁，后到的放在下面备选。找脸和抠人用 MediaPipe 在浏览器的后台线程里完成，图片不上传。
+- **可选：登录 Pollinations**，用你自己的 Pollen 额度出图（每张约 0.002 Pollen），图上没有小标志，也不用排队。登录页预填 5 Pollen 上限、7 天有效，可在 [enter.pollinations.ai](https://enter.pollinations.ai) 随时收回。登录密钥只存在当前标签页（sessionStorage），只发给 gen.pollinations.ai，关掉标签页就没了。
 - 也可在“接口设置”换成你自己的 OpenAI 格式接口（OpenAI、硅基流动、自建代理），可一次并行生成 1–4 张，多出“按文字改图”。Key 只存在本机浏览器。
 - 生成新图时，你写的文字会发给这些 AI 服务；你自己的图片只在浏览器里处理。
 - **多线程**：画面计算分给全部 CPU 核心（Web Worker），换车、导出也在后台线程，页面不卡；画面与单线程版逐像素一致。
 - **离线可用**：车型模板和找脸模型只下载一次（Service Worker 缓存），之后断网也能出图、导出。
 
-All 12 official models · 5 styles (wrap-around, poster, mirror, tile, face-on-hood) · live preview ·
+All 12 official models · 5 styles (wrap-around, poster, mirror, tile, face-on-hood, Cybertruck included) · live preview ·
+3D preview on an approximate body built from the official template (drag, zoom, 5 camera presets, auto-spin; three.js loads only when opened) ·
 export always meets Tesla's rules (PNG, ≤1024 px, < 1 MB, black outside the template, name ≤ 30 chars) ·
 free AI built in: FLUX (Hugging Face) and Pollinations race, AI Horde joins after 25 s, first picture wins and later ones become extra choices;
 face finding and cut-out run in a background thread with MediaPipe ·
+optional Pollinations sign-in (your own Pollen, about 0.002 per picture: no logo, no queue; 5 Pollen cap and 7-day key pre-filled;
+the key stays in this tab only and is only sent to gen.pollinations.ai) ·
 or plug in your own OpenAI-compatible API (1–4 pictures in parallel, picture editing). Your own pictures never leave the browser.
 Multi-threaded: frames render on all CPU cores (Web Workers), car switching and export run in the background, output is pixel-identical
 to the single-thread engine. Works offline after the first visit (service worker cache).
