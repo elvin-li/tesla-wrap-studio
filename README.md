@@ -13,14 +13,28 @@ Drop in a picture, get a ready-to-use Tesla Paint Shop wrap.
 - 五种风格：**环绕**（风景绕车一圈，地平线等高）、**海报**、**对称**、**平铺**、**车头脸**（脸放上引擎盖，人物立在两侧车门，其余是柔化背景）。
 - 实时预览，可调地平线、缩放、旋转、亮度、色彩。
 - 导出自动满足特斯拉要求：PNG、≤1024 px、< 1 MB、模板外纯黑、文件名 ≤ 30 字符。
-- **免费 AI，打开就能用**：写一句话生成新图（Pollinations，免注册，约每 45 秒一张）；找脸和抠人用 MediaPipe 在浏览器里完成，图片不上传。
-- 也可在“接口设置”换成你自己的 OpenAI 格式接口（OpenAI、硅基流动、自建代理），多出“按文字改图”。Key 只存在本机浏览器。
-- 生成新图时，你写的文字会发给所选的 AI 服务；你自己的图片只在浏览器里处理。
+- **免费 AI，打开就能用**：写一句话，FLUX（Hugging Face）和 Pollinations 同时开画，25 秒还没好再加 AI Horde；谁先画好用谁，后到的放在下面备选。找脸和抠人用 MediaPipe 在浏览器的后台线程里完成，图片不上传。
+- 也可在“接口设置”换成你自己的 OpenAI 格式接口（OpenAI、硅基流动、自建代理），可一次并行生成 1–4 张，多出“按文字改图”。Key 只存在本机浏览器。
+- 生成新图时，你写的文字会发给这些 AI 服务；你自己的图片只在浏览器里处理。
+- **多线程**：画面计算分给全部 CPU 核心（Web Worker），换车、导出也在后台线程，页面不卡；画面与单线程版逐像素一致。
+- **离线可用**：车型模板和找脸模型只下载一次（Service Worker 缓存），之后断网也能出图、导出。
 
 All 12 official models · 5 styles (wrap-around, poster, mirror, tile, face-on-hood) · live preview ·
 export always meets Tesla's rules (PNG, ≤1024 px, < 1 MB, black outside the template, name ≤ 30 chars) ·
-free AI built in (text to picture via Pollinations, no sign-up; face finding and cut-out run in the browser with MediaPipe) ·
-or plug in your own OpenAI-compatible API for picture editing. Your own pictures never leave the browser.
+free AI built in: FLUX (Hugging Face) and Pollinations race, AI Horde joins after 25 s, first picture wins and later ones become extra choices;
+face finding and cut-out run in a background thread with MediaPipe ·
+or plug in your own OpenAI-compatible API (1–4 pictures in parallel, picture editing). Your own pictures never leave the browser.
+Multi-threaded: frames render on all CPU cores (Web Workers), car switching and export run in the background, output is pixel-identical
+to the single-thread engine. Works offline after the first visit (service worker cache).
+
+### 速度 / Speed (10-core Mac, Chrome)
+
+| | 单线程 / before | 多线程 / now |
+|---|---|---|
+| 拖滑块出一帧 / slider → frame | 31 ms | 9 ms |
+| 换没用过的车型 / switch to a new car | 389 ms（页面卡 250 ms） | 85 ms（不卡） |
+| 下载 PNG / export | 207 ms（页面卡 180 ms） | 17 ms（不卡） |
+| 车头脸找脸 / face finder, first time | 4.5 s | 0.08 s（提前加载） |
 
 ## 放进车里 / Install in the car
 

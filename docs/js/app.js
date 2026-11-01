@@ -31,7 +31,8 @@ const I18N = {
     'f.ai': 'Find the face again', 'f.side': 'Figure on the doors', 'f.cut': 'Person only (cut out)',
     'ai.t': 'AI picture', 'ai.s': 'free, no sign-up', 'ai.ph': 'One line, e.g. cyberpunk city at night, neon, rain',
     'ai.prov': 'Service', 'ai.pFree': 'Free (Pollinations)', 'ai.pCustom': 'My own API (OpenAI style)',
-    'ai.free': 'Free: about 1 picture every 45 s. Your words go to Pollinations. Face finding runs in your browser.',
+    'ai.free': 'Free: FLUX (Hugging Face) and Pollinations draw at the same time; AI Horde joins after 25 s. The first picture is used, later ones show up below. Your words go to these services. Face finding runs in your browser.',
+    'ai.count': 'At once', 'st.extra': 'Another picture arrived',
     'ai.stop': 'Stop', 'ai.ideas': 'Ideas:',
     'st.threads': ' · N threads',
     'st.wait': 'Free limit, waiting', 'st.stopped': 'Stopped', 'st.freeBusy': 'The free service is busy. Try again in a minute.',
@@ -48,6 +49,7 @@ const I18N = {
     faceSize: '脸大小', faceCrop: '脸取景', sideZoom: '车门人物', sideShift: '前后移', bgDark: '背景压暗', feather: '边缘柔和',
     'st.ai': 'AI 正在画…（10–60 秒）', 'st.aiFind': '正在找脸…', 'st.noKey': '先在“接口设置”里填 API Key',
     'st.threads': ' · N 线程',
+    'st.extra': '又来了一张备选图',
     'st.wait': '免费额度排队中，还要', 'st.stopped': '已停止', 'st.freeBusy': '免费服务太忙，过一分钟再试。',
     'st.noPrompt': '先写一句话', 'st.noSrc': '先放一张图片', 'st.noFace': '这个车型布局不同，暂不支持车头脸。',
     'st.found': '找到脸了', 'st.notFound': '没找到脸，请在小图上点一下脸。', 'st.aiErr': 'AI 出错：',
@@ -237,7 +239,7 @@ const blobToDataUrl = (b) => new Promise((res) => { const r = new FileReader(); 
 // ---------- AI picture ------------------------------------------------------------------------------
 const cfg = () => ({
   provider: $('#aiProv').value, base: $('#aiBase').value || 'https://api.openai.com/v1', key: $('#aiKey').value,
-  imgModel: $('#aiImg').value || 'gpt-image-1', visModel: $('#aiVis').value || 'gpt-4o-mini',
+  imgModel: $('#aiImg').value || 'gpt-image-1', visModel: $('#aiVis').value || 'gpt-4o-mini', count: +$('#aiCount').value || 1,
 });
 function syncProvider() {
   const custom = $('#aiProv').value === 'custom';
@@ -253,6 +255,8 @@ async function aiPicture(editing) {
   if (!AI.ready(c)) { openCfg(); return setStatus('st.noKey'); }
   if (!prompt) { $('#aiPrompt').focus(); return setStatus('st.noPrompt'); }
   if (editing && !S.src) return setStatus('st.noSrc');
+  aiCtl?.abort();                                   // stop pictures still coming from the last request
+  if (S.mode === 'face') AI.preload();              // face models load while the picture is made
   aiBusy(true); setStatus('st.ai'); $('#aiStop').hidden = false;
   aiCtl = new AbortController();
   try {
@@ -261,9 +265,13 @@ async function aiPicture(editing) {
       const cv = new OffscreenCanvas(S.src.w, S.src.h);
       cv.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(S.src.data), S.src.w, S.src.h), 0, 0);
       blob = await AI.edit(c, await cv.convertToBlob({ type: 'image/png' }), prompt);
-    } else blob = await AI.generate(c, prompt, { face: S.mode === 'face', signal: aiCtl.signal, onWait: (s) => (s ? setStatus('st.wait', ` ${s}s`) : setStatus('st.ai')) });
+    } else blob = await AI.generate(c, prompt, {
+      face: S.mode === 'face', signal: aiCtl.signal,
+      onWait: (s) => (s ? setStatus('st.wait', ` ${s}s`) : setStatus('st.ai')),
+      onExtra: (b, name) => { addHistory(b, name); setStatus('st.extra', name ? ` · ${name}` : ''); },
+    });
     aiBusy(false); $('#aiStop').hidden = true;
-    addHistory(blob);
+    addHistory(blob, blob.source);
     await setSource(blob, 'ai_' + prompt.normalize('NFKD').replace(/[^A-Za-z0-9]+/g, '_').slice(0, 14));
   } catch (e) {
     console.error(e); aiBusy(false); $('#aiStop').hidden = true;
@@ -275,11 +283,12 @@ async function aiPicture(editing) {
 }
 // last AI pictures, click to reuse (kept in memory only)
 const hist = [];
-function addHistory(blob) {
-  const url = URL.createObjectURL(blob); hist.unshift({ url, blob }); if (hist.length > 6) URL.revokeObjectURL(hist.pop().url);
+function addHistory(blob, from = '') {
+  const url = URL.createObjectURL(blob); hist.unshift({ url, blob, from }); if (hist.length > 6) URL.revokeObjectURL(hist.pop().url);
   const box = $('#aiHist'); box.hidden = false; box.innerHTML = '';
   for (const h of hist) {
-    const b = document.createElement('button'); b.type = 'button'; b.innerHTML = `<img src="${h.url}" alt="">`;
+    const b = document.createElement('button'); b.type = 'button'; b.title = h.from;
+    const im = document.createElement('img'); im.src = h.url; im.alt = h.from; b.appendChild(im);
     b.onclick = () => setSource(h.blob, 'ai'); box.appendChild(b);
   }
 }
@@ -438,10 +447,12 @@ $('#aiGen').onclick = () => aiPicture(false);
 $('#aiEdit').onclick = () => aiPicture(true);
 $('#aiStop').onclick = () => aiCtl?.abort();
 $('#cutOn').onchange = schedule;
+// pointing at the face style starts loading its models in the background
+for (const ev of ['pointerenter', 'focus']) document.querySelector('[data-mode=face]').addEventListener(ev, () => AI.preload(), { once: true });
 document.querySelectorAll('[data-idea]').forEach((b) => (b.onclick = () => { $('#aiPrompt').value = b.textContent; $('#aiPrompt').focus(); }));
 $('#aiPrompt').onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); aiPicture(false); } };
 {
-  const c = AI.loadCfg(), map = { aiProv: 'provider', aiBase: 'base', aiKey: 'key', aiImg: 'imgModel', aiVis: 'visModel' };
+  const c = AI.loadCfg(), map = { aiProv: 'provider', aiBase: 'base', aiKey: 'key', aiImg: 'imgModel', aiVis: 'visModel', aiCount: 'count' };
   for (const [id, k] of Object.entries(map)) { $('#' + id).value = c[k]; $('#' + id).onchange = () => { AI.saveCfg(cfg()); syncProvider(); }; }
   syncProvider();
 }

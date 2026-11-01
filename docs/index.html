@@ -68,7 +68,7 @@
           <button id="aiStop" class="chip" type="button" data-i18n="ai.stop" hidden>停止</button>
         </div>
         <div id="aiHist" class="ai-hist" hidden></div>
-        <p id="aiFree" class="fine" data-i18n="ai.free">免费：大约每 45 秒一张。你写的文字会发给 Pollinations。找脸在你的浏览器里完成。</p>
+        <p id="aiFree" class="fine" data-i18n="ai.free">免费：FLUX（Hugging Face）和 Pollinations 同时开画，25 秒还没好再加 AI Horde。谁先画好用谁，后到的放在下面备选。你写的文字会发给这些服务。找脸在你的浏览器里完成。</p>
         <details class="ai-cfg" id="aiCfgBox">
           <summary data-i18n="ai.cfg">接口设置</summary>
           <label><span data-i18n="ai.prov">服务</span><select id="aiProv">
@@ -80,6 +80,7 @@
             <label><span>API Key</span><input id="aiKey" type="password" spellcheck="false" autocomplete="off" placeholder="sk-…"></label>
             <label><span data-i18n="ai.img">生图模型</span><input id="aiImg" spellcheck="false" placeholder="gpt-image-1"></label>
             <label><span data-i18n="ai.vis">识图模型</span><input id="aiVis" spellcheck="false" placeholder="gpt-4o-mini"></label>
+            <label><span data-i18n="ai.count">同时生成</span><select id="aiCount"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select></label>
             <p class="fine" data-i18n="ai.note">支持 OpenAI 格式的接口（OpenAI、硅基流动、自建代理等）。Key 只存在这台电脑的浏览器里。用 AI 时，你的文字和图片会发给你填的接口，会按它的价格扣费。</p>
           </div>
         </details>

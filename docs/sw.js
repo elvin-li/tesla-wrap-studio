@@ -40,8 +40,18 @@ const isAiHost = (url) =>
 // A response safe to store: a real 200 from the network (not an error, not opaque).
 const storable = (resp) => resp && resp.status === 200 && resp.type !== 'opaque' && resp.type !== 'opaqueredirect';
 
-self.addEventListener('install', () => {
+// The app's own files, saved at install so even the first visit works offline afterwards.
+// Same-origin requests stay network-first, so these copies are only used when the network is down.
+const APP_FILES = ['./', 'index.html', 'css/style.css', 'assets/favicon.svg', 'js/app.js', 'js/engine.js', 'js/pool.js',
+  'js/worker.js', 'js/models.js', 'js/ai.js', 'js/ai-worker.js', 'js/ai-boxes.js'];
+
+self.addEventListener('install', (event) => {
   self.skipWaiting();
+  event.waitUntil((async () => {
+    const cache = await caches.open(STATIC_CACHE);
+    await Promise.all(APP_FILES.map((u) => fetch(u, { cache: 'reload' })
+      .then((r) => (storable(r) ? cache.put(u, r) : null)).catch(() => {})));   // one missing file never blocks install
+  })());
 });
 
 self.addEventListener('activate', (event) => {
@@ -91,7 +101,8 @@ async function networkFirst(request, cacheName) {
     if (storable(resp)) cache.put(request, resp.clone());
     return resp;
   } catch (err) {
-    const hit = await cache.match(request);
+    const hit = (await cache.match(request)) || (await cache.match(request, { ignoreSearch: true }))
+      || (request.mode === 'navigate' ? await cache.match('./') : undefined);
     if (hit) return hit;
     throw err;
   }
