@@ -404,7 +404,7 @@ function paint() {
   $('#carImg').hidden = !showCar; c.hidden = showCar || show3d; $('#v3d').hidden = !show3d;
   $('#empty').hidden = !!S.src || show3d;
   view3d(show3d);
-  if (!S.rgba) return;
+  if (!S.rgba || show3d) return;                  // the flat canvas is hidden; switching back repaints it
   const img = new ImageData(new Uint8ClampedArray(S.rgba), S.T.W, S.T.H);
   if (S.view === 'lines') {
     const d = img.data, { mask, lines, W, H } = S.T;

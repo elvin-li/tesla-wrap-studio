@@ -119,7 +119,11 @@ function makePlan(A, B, n) {
       const dx = PX[i + 1] - PX[i], dy = PY[i + 1] - PY[i], l = Math.hypot(dx, dy) || 1;
       return { X: PX[i] + dx * t, Y: PY[i] + dy * t, nx: dy / l, ny: -dx / l };
     },
-    sigOfX(X) { const i = Math.min(N - 1, find(PX, clamp(X, -A, A), true)); return S[i]; },
+    sigOfX(X) {                                       // samples are sparse along the straight sides: interpolate
+      X = clamp(X, -A, A);
+      const i = Math.min(N - 1, find(PX, X, true)), dx = PX[i] - PX[i + 1];
+      return S[i] + (dx > 1e-9 ? clamp((PX[i] - X) / dx, 0, 1) : 0) * (S[i + 1] - S[i]);
+    },
     halfW: (X) => B * Math.pow(Math.max(0, 1 - Math.pow(Math.min(1, Math.abs(X) / A), n)), 1 / n),
     tipX: (Y) => A * Math.pow(Math.max(0, 1 - Math.pow(Math.min(1, Math.abs(Y) / B), n)), 1 / n),
   };
@@ -158,9 +162,24 @@ export function layout(T, id) {
   const Zr = gc + clamp((tail.depth || 0) * 1.05, 0.62 * hwall, 1.1 * hwall);
   const Xhf = A - (cyber ? 0.015 : 0.03) * L, Xc = Xhf - (hood.y1 - hood.y0), Xr0 = -A + (fam === 'suv' ? 0.2 : 0.26) * L;
 
-  // Cybertruck: roof line and arches straight from the strip edges (outer edge = sill, inner edge = roof line)
-  const smoothRow = (a, r) => (y) => { let s = 0, n = 0; for (let q = Math.round(y) - r; q <= Math.round(y) + r; q++) { const v = a[clamp(q, bl.y0, bl.y1)]; if (Number.isFinite(v)) { s += v; n++; } } return n ? s / n : 0; };
-  const roofAt = smoothRow(bl.xi, 5), sillAt = smoothRow(bl.xo, 2);
+  // Cybertruck: roof line and arches straight from the strip edges (outer edge = sill, inner edge = roof line).
+  // The edges step 1 px at a time; two box passes smooth the steps away and reads between rows are blended,
+  // or the panels show streaky glare.
+  const smoothed = (a, r) => {
+    let cur = Float32Array.from(a);
+    for (let pass = 0; pass < 2; pass++) {
+      const nxt = new Float32Array(cur.length).fill(NaN);
+      for (let y = bl.y0; y <= bl.y1; y++) {
+        let s = 0, n = 0;
+        for (let q = y - r; q <= y + r; q++) { const v = cur[clamp(q, bl.y0, bl.y1)]; if (Number.isFinite(v)) { s += v; n++; } }
+        if (n) nxt[y] = s / n;
+      }
+      cur = nxt;
+    }
+    const at = (q) => { const v = cur[clamp(q, bl.y0, bl.y1)]; return Number.isFinite(v) ? v : 0; };
+    return (y) => { y = clamp(y, bl.y0, bl.y1); const q = Math.floor(y), t = y - q; return at(q) * (1 - t) + at(q + 1) * t; };
+  };
+  const roofAt = smoothed(bl.xi, Math.max(6, Math.round(0.012 * lb))), sillAt = smoothed(bl.xo, 3);
   const ztop = cyber
     ? (X) => gc + roofAt(rowOf(plan.sigOfX(X)))
     : (X) => (X >= Xhf ? Zf : X >= Xc ? Zf + (Zb - Zf) * ease((Xhf - X) / (Xhf - Xc)) : X >= Xr0 ? Zb : Zb + (Zr - Zb) * ease((Xr0 - X) / (Xr0 + A)));
@@ -169,9 +188,10 @@ export function layout(T, id) {
   let wheels;
   const Rw = (cyber ? 0.077 : 0.074) * L, tw = (cyber ? 0.06 : 0.052) * L;
   if (cyber) {                                        // arch notches in the strip's outer edge
-    const runs = []; let a = -1;
-    for (let y = bl.y0; y <= bl.y1 + 1; y++) {
-      const notch = y <= bl.y1 && bl.xo[y] > 0.025 * w;
+    const runs = []; let a = -1, archTop = 0;
+    for (let y = bl.y0; y <= bl.y1; y++) if (bl.xo[y] > archTop) archTop = bl.xo[y];
+    for (let y = bl.y0; y <= bl.y1 + 1; y++) {       // upper part of each notch only, so the bumpers don't pull it
+      const notch = y <= bl.y1 && bl.xo[y] > Math.max(0.025 * w, 0.6 * archTop);
       if (notch && a < 0) a = y; else if (!notch && a >= 0) { if (y - a > 0.06 * lb) runs.push([a, y - 1]); a = -1; }
     }
     runs.sort((p, q) => p[0] - q[0]);
@@ -225,7 +245,7 @@ export function layout(T, id) {
       top[r * TW + c] = s;
     }
   }
-  return { fam, L, Wd, A, B, plan, Ph, gc, Zb, Zf, Zr, Xhf, Xc, ztop, zbot, zmax, wheels, Rw, tw, wall, top };
+  return { fam, L, Wd, A, B, plan, Ph, gc, Zb, Zf, Zr, Xhf, Xc, ztop, zbot, zmax, wheels, Rw, tw, wall, top, bl };
 }
 
 // ---------- meshes --------------------------------------------------------------------------------
@@ -247,23 +267,26 @@ function gridGeometry(nu, nv, fn, flip) {             // fn(i, j) -> [x3, y3, z3
 function buildCar(Lo, wallTex, topTex) {
   const { fam, L, Wd, A, B, plan, Ph, ztop, zbot, zmax } = Lo, cyber = fam === 'cyber';
   const g = new THREE.Group();
-  const paint = (map) => new THREE.MeshPhysicalMaterial({ map, roughness: 0.38, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.1 });
+  const paint = (map) => new THREE.MeshPhysicalMaterial({ map, roughness: 0.45, metalness: 0, clearcoat: 0.45, clearcoatRoughness: 0.2, envMapIntensity: 0.75 });
+  // the inside of the shell is dark, so arches and the gap under the body look black from any side
+  const inside = new THREE.MeshBasicMaterial({ color: 0x050607, side: THREE.BackSide });
+  const shell = (geo, mat) => { g.add(new THREE.Mesh(geo, mat), new THREE.Mesh(geo, inside)); };
   const NS = 260, NR = 30, shoulder = (t) => (cyber ? 0 : Wd * (0.01 * Math.sin(Math.PI * t) - 0.02 * t * t * t * t));
   const st = []; for (let i = 0; i <= NS; i++) { const p = plan.at(Ph * i / NS); st.push({ ...p, zt: ztop(p.X), zb: Math.min(zbot(p.X), ztop(p.X) - 2) }); }
   const wallMat = paint(wallTex);
   for (const left of [true, false]) {
-    g.add(new THREE.Mesh(gridGeometry(NS, NR, (i, j) => {
+    shell(gridGeometry(NS, NR, (i, j) => {
       const p = st[i], t = j / NR, Z = p.zb + (p.zt - p.zb) * t, o = shoulder(t), X = p.X + p.nx * o, Y = p.Y + p.ny * o;
       const sig = Ph * i / NS;
       return [X, Z, left ? -Y : Y, (left ? sig : 2 * Ph - sig) / (2 * Ph), Z / zmax];
-    }, !left), wallMat));
+    }, !left), wallMat);
   }
   const K = 36, o1 = shoulder(1);
-  g.add(new THREE.Mesh(gridGeometry(NS, K, (i, k) => {
+  shell(gridGeometry(NS, K, (i, k) => {
     const p = st[i], s = -1 + 2 * k / K, yt = p.Y + p.ny * o1, X = p.X + p.nx * o1, Y = s * yt;
     const crown = cyber ? 0 : 0.018 * Wd * (1 - s * s) * Math.min(1, yt / (0.6 * B));
     return [X, p.zt + crown, -Y, (X + A) / (2 * A), (Y + B) / (2 * B)];
-  }, true), paint(topTex)));
+  }, true), paint(topTex));
   if (!cyber) {                                       // glass cabin
     const suv = fam === 'suv', Hc = (suv ? 0.125 : 0.1) * L, Xc = Lo.Xc + 0.01 * L, Xrc = -A + (suv ? 0.075 : 0.16) * L;
     const ws = (suv ? 1.25 : 1.6) * Hc, rs = (suv ? 0.75 : 1.9) * Hc, NC = 90, K2 = 28;
@@ -274,9 +297,6 @@ function buildCar(Lo, wallTex, topTex) {
       return [X, ztop(X) - 1.5 + hc(X) * Math.pow(sn, 0.6), -Math.cos(th) * bc * (1 - 0.16 * sn), 0, 0];
     }, false), glass));
   }
-  const dark = new THREE.MeshStandardMaterial({ color: 0x07080a, roughness: 1 });
-  const box = new THREE.Mesh(new THREE.BoxGeometry(L * 0.86, Math.max(10, Lo.Zb * 0.82 - Lo.gc), Wd * 0.8), dark);
-  box.position.set(0, Lo.gc + (Lo.Zb * 0.82 - Lo.gc) / 2, 0); g.add(box);
   // wheels
   const tire = new THREE.MeshStandardMaterial({ color: 0x131416, roughness: 0.92 });
   const rim = new THREE.MeshStandardMaterial({ color: 0x3b3f47, metalness: 0.9, roughness: 0.3 });
