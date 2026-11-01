@@ -102,11 +102,13 @@ export function surface(T) {
 
 // ---------- hood + side doors -------------------------------------------------------------------
 // All square templates share one layout: car front = sheet top, hood = big piece near the top centre,
-// each side (doors) = pieces down the left / right edge. Cybertruck (1024x768) is laid out sideways -> null.
+// each side (doors) = pieces down the left / right edge.
+// Cybertruck (1024x768) is laid out sideways (checked against Tesla's own example wraps): truck front = sheet LEFT,
+// top band = right side (its art is upside down), bottom band = left side, curved piece left of centre = hood.
 export function zones(T) {
   if (T.zones !== undefined) return T.zones;
   const { W, H, mask } = T;
-  if (W !== H) return (T.zones = null);
+  if (W < H) return (T.zones = null);
   const lab = new Int32Array(W * H), comps = [], st = [];
   for (let s = 0; s < W * H; s++) {
     if (!mask[s] || lab[s]) continue;
@@ -121,6 +123,7 @@ export function zones(T) {
     }
     c.cx = c.sx / c.n / W; c.cy = c.sy / c.n / H; comps.push(c);
   }
+  if (W > H) return (T.zones = wideZones(W, H, lab, comps));
   const hood = comps.filter((c) => c.cx > 0.38 && c.cx < 0.62 && c.cy > 0.12 && c.cy < 0.4).sort((a, b) => b.n - a.n)[0];
   const side = (left) => {
     // door panels: on the outer edge, mid height, big and solid (the thin curved pillar strips are skipped)
@@ -133,6 +136,29 @@ export function zones(T) {
   };
   if (!hood) return (T.zones = null);
   return (T.zones = { lab, hood, left: side(true), right: side(false) });
+}
+
+function wideZones(W, H, lab, comps) {
+  const big = comps.filter((c) => c.n > 0.05 * W * H).sort((a, b) => b.n - a.n).slice(0, 2);
+  const top = big.find((c) => c.cy < 0.5), bot = big.find((c) => c.cy > 0.5);
+  const hood = comps.filter((c) => c !== top && c !== bot && c.cx < 0.4 && c.cy > 0.3 && c.cy < 0.7).sort((a, b) => b.n - a.n)[0];
+  if (!top || !bot || !hood) return null;
+  // doors = middle of each band, from its outer edge (sill) to where the solid band first ends (window line)
+  const band = (c, fromTop) => {
+    const x0 = Math.round(0.25 * W), x1 = Math.round(0.62 * W), edges = [];
+    for (let x = x0; x <= x1; x += 4) {
+      let y = fromTop ? c.y0 : c.y1, n = 0;
+      while (y >= 0 && y < H && lab[y * W + x] === c.id) { y += fromTop ? 1 : -1; n++; }
+      if (n > 8) edges.push(y);
+    }
+    if (!edges.length) return null;
+    edges.sort((a, b) => a - b);
+    const inner = edges[edges.length >> 1];
+    const z = fromTop ? { x0, x1, y0: c.y0, y1: inner } : { x0, x1, y0: inner, y1: c.y1 };
+    z.cx = (z.x0 + z.x1) / 2; z.cy = (z.y0 + z.y1) / 2;
+    return z;
+  };
+  return { lab, wide: true, hood, left: band(bot, false), right: band(top, true) };
 }
 
 // Tiny copy of the picture: sampled with bilinear it gives a soft, blurred background.
@@ -174,6 +200,7 @@ function bilinear(src, u, v, out, o, clamp) {
 //       cut (use src.alpha = person mask {w,h,data} so only the person is drawn on the doors)
 function faceSampler(T, src, o, px) {
   const { W, H } = T, Z = zones(T), lab = Z?.lab;
+  if (Z?.wide) return faceSamplerWide(T, Z, src, o, px);
   const bsrc = Z ? small(src) : src, bgS = Math.max(W / bsrc.w, H / bsrc.h), dark = Z ? 1 - o.bgDark : 1;
   const fg = new Float32Array(3), fe = Math.max(0.02, o.feather), cut = o.cut ? src.alpha : null;
   const f = o.face || [0.32, 0.1, 0.68, 0.5];
@@ -207,6 +234,52 @@ function faceSampler(T, src, o, px) {
       const ea = (u - q.u0) / q.sw, eb = (v - q.v0) / q.sh, edge = Math.min(ea, 1 - ea, eb, 1 - eb);
       a = smooth(0, fe * 0.6, edge);
       if (a > 0 && cut) {                                                         // person only, no box around it
+        const ax = Math.min(cut.w - 1, Math.max(0, (u / src.w * cut.w) | 0)), ay = Math.min(cut.h - 1, Math.max(0, (v / src.h * cut.h) | 0));
+        a *= smooth(0.25, 0.75, cut.data[ay * cut.w + ax]);
+      }
+      if (a > 0) bilinear(src, u, v, fg, 0, true);
+      break;
+    }
+    if (a > 0) for (let c = 0; c < 3; c++) px[c] = px[c] * (1 - a) + fg[c] * a;
+  };
+}
+
+// Cybertruck. Hood face reads from the front: picture up -> sheet +x, picture right -> sheet +y (turned 90°
+// clockwise, like Tesla's own examples). Sides: picture up -> toward the sheet centre (the roof), unmirrored.
+function faceSamplerWide(T, Z, src, o, px) {
+  const { W, H } = T, lab = Z.lab;
+  const bsrc = small(src), bgS = Math.max(W / bsrc.w, H / bsrc.h), dark = 1 - o.bgDark;
+  const fg = new Float32Array(3), fe = Math.max(0.02, o.feather), cut = o.cut ? src.alpha : null;
+  const f = o.face || [0.32, 0.1, 0.68, 0.5];
+  const fcx = (f[0] + f[2]) / 2 * src.w, fcy = (f[1] + f[3]) / 2 * src.h;
+  const fw = Math.max(4, (f[2] - f[0]) / 2 * src.w * o.faceCrop), fh = Math.max(4, (f[3] - f[1]) / 2 * src.h * o.faceCrop);
+  const h = Z.hood, s = Math.min((h.x1 - h.x0) / 2 / fh, (h.y1 - h.y0) / 2 / fw) * o.faceSize;
+  const hood = { id: h.id, cx: h.cx * W, cy: h.cy * H, rx: fh * s, ry: fw * s, s };
+  const sides = [];
+  if (o.sideOn) {
+    const b = o.subject || [0, 0, 1, 1], u0 = b[0] * src.w, v0 = b[1] * src.h, sw = (b[2] - b[0]) * src.w;
+    const sh = Math.min((b[3] - b[1]) * src.h, sw * 1.3);
+    // up = +1: the roof is toward +y (top band, car-right); up = -1: toward -y (bottom band, car-left)
+    for (const [z, up] of [[Z.left, -1], [Z.right, 1]]) if (z) {
+      const ext = z.y1 - z.y0, len = z.x1 - z.x0, s2 = Math.min(ext / sh, len / sw) * o.sideZoom;
+      sides.push({ z, up, s: s2, cx: z.cx + o.sideShift * len, cy: z.cy, u0, v0, sw, sh, ucx: u0 + sw / 2, vcy: v0 + sh / 2 });
+    }
+  }
+  return (i, x, y) => {
+    bilinear(bsrc, (x - W / 2) / bgS + bsrc.w / 2, (y - H / 2) / bgS + bsrc.h / 2, px, 0, true);
+    px[0] *= dark; px[1] *= dark; px[2] *= dark;
+    let a = 0;
+    if (lab[i] === hood.id) {
+      const dx = x - hood.cx, dy = y - hood.cy, e = Math.hypot(dx / hood.rx, dy / hood.ry);
+      a = 1 - smooth(1 - fe, 1, e);
+      if (a > 0) bilinear(src, fcx + dy / hood.s, fcy - dx / hood.s, fg, 0, true);
+    } else for (const q of sides) {
+      if (x < q.z.x0 || x > q.z.x1 || y < q.z.y0 - 4 || y > q.z.y1 + 4) continue;
+      const dx = x - q.cx, dy = y - q.cy;
+      const u = q.ucx - q.up * dx / q.s, v = q.vcy - q.up * dy / q.s;           // picture top -> toward the roof
+      const ea = (u - q.u0) / q.sw, eb = (v - q.v0) / q.sh, edge = Math.min(ea, 1 - ea, eb, 1 - eb);
+      a = smooth(0, fe * 0.6, edge);
+      if (a > 0 && cut) {
         const ax = Math.min(cut.w - 1, Math.max(0, (u / src.w * cut.w) | 0)), ay = Math.min(cut.h - 1, Math.max(0, (v / src.h * cut.h) | 0));
         a *= smooth(0.25, 0.75, cut.data[ay * cut.w + ax]);
       }

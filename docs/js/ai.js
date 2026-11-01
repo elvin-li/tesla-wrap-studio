@@ -56,6 +56,65 @@ const HORDE = 'https://aihorde.net/api/v2';                         // AI Horde,
 const AGENT = 'wrap-studio:2:github.com/elvin-li/tesla-wrap-studio';
 export const FREE_SERVICES = ['FLUX.1-schnell (Hugging Face)', 'Pollinations', 'AI Horde'];
 
+// ---------- Pollinations account (optional) ------------------------------------------------------
+// The visitor signs in at enter.pollinations.ai and lets this page spend a small budget of their own Pollen
+// ("Bring Your Own Pollen"). Pictures then come from gen.pollinations.ai: no logo, no 45 s queue.
+// The key stays in this tab only (sessionStorage), as Pollinations asks, and is only sent to gen.pollinations.ai.
+// Optional: an App Key (pk_..., free at enter.pollinations.ai/keys, redirect URI = this page) shows the app name
+// on the sign-in screen. Without it Pollinations shows this site's address instead.
+export const POLLEN_APP_KEY = '';
+const POLL_GEN = 'https://gen.pollinations.ai';
+const PKEY = 'pollen.key', PSTATE = 'pollen.state';
+export const pollenKey = () => { try { return sessionStorage.getItem(PKEY) || ''; } catch { return ''; } };
+const pollenChanged = (why) => window.dispatchEvent(new CustomEvent('pollen:change', { detail: why }));
+export function pollenLogout(why = 'logout') {
+  try { sessionStorage.removeItem(PKEY); } catch { /* storage off */ }
+  pollenChanged(why);
+}
+export function pollenLoginUrl() {
+  const state = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+  sessionStorage.setItem(PSTATE, state);
+  const q = new URLSearchParams({ redirect_uri: location.origin + location.pathname, models: 'image,text', budget: '5', expiry: '30', state });
+  if (POLLEN_APP_KEY) q.set('client_id', POLLEN_APP_KEY);
+  return 'https://enter.pollinations.ai/authorize?' + q;
+}
+// Run once when the page opens. Pollinations comes back with #api_key=sk_...&state=... (or #error=...).
+// Returns 'ok' | 'denied' | 'bad' | null (nothing to do). The key is taken out of the address bar at once.
+export function pollenCallback() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (!h.has('api_key') && !h.has('error')) return null;
+  let want = '';
+  try { want = sessionStorage.getItem(PSTATE) || ''; sessionStorage.removeItem(PSTATE); } catch { /* storage off */ }
+  history.replaceState(null, '', location.pathname + location.search);
+  if (h.has('error')) return 'denied';
+  const key = h.get('api_key') || '';
+  if (!want || h.get('state') !== want || !/^sk_[\w-]{8,200}$/.test(key)) return 'bad';
+  sessionStorage.setItem(PKEY, key);
+  pollenChanged('login');
+  return 'ok';
+}
+// Pollen left on this key (null when unknown). A refused key is dropped.
+export async function pollenBalance() {
+  const key = pollenKey(); if (!key) return null;
+  try {
+    const r = await fetch(`${POLL_GEN}/account/balance`, { headers: { Authorization: `Bearer ${key}` } });
+    if (r.status === 401 || r.status === 403) { pollenLogout('expired'); return null; }
+    if (!r.ok) return null;
+    const j = await r.json();
+    return typeof j.balance === 'number' ? j.balance : null;
+  } catch { return null; }
+}
+// One picture with the visitor's own key: model flux = FLUX.1-schnell, about 0.002 Pollen.
+async function pollinationsKeyed(prompt, { signal }) {
+  const key = pollenKey();
+  const url = `${POLL_GEN}/image/${encodeURIComponent(prompt)}?model=flux&width=1536&height=960&seed=${(Math.random() * 2147483647) | 0}`;
+  const r = await fetch(url, { signal, headers: { Authorization: `Bearer ${key}` } });
+  if (r.ok && (r.headers.get('content-type') || '').startsWith('image/')) return r.blob();
+  if (r.status === 401 || r.status === 403) { pollenLogout('expired'); throw new Error('pollen-expired'); }
+  if (r.status === 402) { pollenChanged('empty'); throw new Error('pollen-empty'); }
+  throw new Error(`pollen HTTP ${r.status}`);
+}
+
 // Chinese (or any) line -> short English image prompt. Falls back to the raw text.
 async function englishPrompt(text, signal) {
   if (/^[\x00-\x7f]*$/.test(text)) return text;
@@ -163,8 +222,12 @@ async function freeGenerate(prompt, { signal, onWait, onExtra, face } = {}) {
       hordeOn = true; run('AI Horde', () => horde(p, { signal }));
     }
     signal?.addEventListener('abort', () => { clearTimeout(timer); if (!won) reject(abortErr()); }, { once: true });
+    const classic = () => pollinations(p, { signal, onWait: (s) => { if (!won) onWait?.(s); } });
     run('FLUX', () => flux(p, { signal }));
-    run('Pollinations', () => pollinations(p, { signal, onWait: (s) => { if (!won) onWait?.(s); } }));
+    // signed in: the visitor's own key (no logo, no queue); if it is refused, carry on with the free queue
+    run('Pollinations', () => (pollenKey()
+      ? pollinationsKeyed(p, { signal }).catch((e) => { if (e?.name === 'AbortError') throw e; return classic(); })
+      : classic()));
     timer = setTimeout(startHorde, 25000);
   });
 }

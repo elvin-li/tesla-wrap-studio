@@ -26,13 +26,14 @@ const WARM_URLS = MODEL_IDS.flatMap((id) => [
 ]); // 24 total
 
 const MEDIAPIPE_PREFIX = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/';
+const THREE_PREFIX = 'https://cdn.jsdelivr.net/npm/three@0.170.0/';   // 3D preview (pinned, loaded only when opened)
 const MP_MODELS_PREFIX = 'https://storage.googleapis.com/mediapipe-models/';
 
 // Hosts we must never cache or touch (AI image/text/vision backends). Matched by exact host or suffix.
 const AI_HOSTS = ['pollinations.ai', 'aihorde.net', 'hf.space', 'huggingface.co'];
 
 const isImmutable = (url) =>
-  url.href.startsWith(TESLA_RAW + '/') || url.href.startsWith(MEDIAPIPE_PREFIX);
+  url.href.startsWith(TESLA_RAW + '/') || url.href.startsWith(MEDIAPIPE_PREFIX) || url.href.startsWith(THREE_PREFIX);
 const isModelStore = (url) => url.href.startsWith(MP_MODELS_PREFIX);
 const isAiHost = (url) =>
   AI_HOSTS.some((h) => url.hostname === h || url.hostname.endsWith('.' + h) || url.hostname.endsWith(h));
@@ -43,7 +44,7 @@ const storable = (resp) => resp && resp.status === 200 && resp.type !== 'opaque'
 // The app's own files, saved at install so even the first visit works offline afterwards.
 // Same-origin requests stay network-first, so these copies are only used when the network is down.
 const APP_FILES = ['./', 'index.html', 'css/style.css', 'assets/favicon.svg', 'js/app.js', 'js/engine.js', 'js/pool.js',
-  'js/worker.js', 'js/models.js', 'js/ai.js', 'js/ai-worker.js', 'js/ai-boxes.js'];
+  'js/worker.js', 'js/models.js', 'js/ai.js', 'js/ai-worker.js', 'js/ai-boxes.js', 'js/view3d.js'];
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

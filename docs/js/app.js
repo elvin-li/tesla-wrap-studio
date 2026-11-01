@@ -13,7 +13,10 @@ const I18N = {
     demo: 'No picture? Try:', 'demo.1': 'Sunset sea', 'demo.2': 'Neon grid', 'demo.3': 'Ink mountains',
     'm.wrap': 'Wrap', 'm.wrap.s': 'scene goes round', 'm.poster': 'Poster', 'm.poster.s': 'fill it all',
     'm.mirror': 'Mirror', 'm.mirror.s': 'both sides same', 'm.tile': 'Tile', 'm.tile.s': 'repeat pattern',
-    't.outline': 'Panel outline', 'v.sheet': 'Wrap', 'v.lines': 'Show panels', 'v.car': 'Car photo',
+    't.outline': 'Panel outline', 'v.sheet': 'Wrap', 'v.lines': 'Show panels', 'v.car': 'Car photo', 'v.3d': '3D view',
+    'v3d.hint': 'Drag to turn, scroll to zoom. The body is an approximate shape.',
+    'cam.three': '3/4', 'cam.front': 'Front', 'cam.side': 'Side', 'cam.rear': 'Rear', 'cam.top': 'Top', 'cam.spin': 'Spin',
+    'st.load3d': 'Loading 3D…', 'st.no3d': 'This browser cannot show the 3D view.',
     empty: 'Add a picture first', dl: 'Download wrap PNG',
     'how.t': 'Put it in the car', 'how.1': 'Make a folder', 'how.1p': 'On a USB drive (exFAT / FAT32) make a <code>Wraps</code> folder at the top level.',
     'how.2': 'Copy it in', 'how.2p': 'Put the PNG in. Up to 10 at a time.', 'how.3': 'Plug it in',
@@ -31,8 +34,11 @@ const I18N = {
     'f.ai': 'Find the face again', 'f.side': 'Figure on the doors', 'f.cut': 'Person only (cut out)',
     'ai.t': 'AI picture', 'ai.s': 'free, no sign-up', 'ai.ph': 'One line, e.g. cyberpunk city at night, neon, rain',
     'ai.prov': 'Service', 'ai.pFree': 'Free (Pollinations)', 'ai.pCustom': 'My own API (OpenAI style)',
-    'ai.free': 'Free: FLUX (Hugging Face) and Pollinations draw at the same time; AI Horde joins after 25 s. The first picture is used, later ones show up below. Your words go to these services. Face finding runs in your browser.',
+    'ai.free': 'Free: FLUX (Hugging Face) and Pollinations draw at the same time; AI Horde joins after 25 s. The first picture is used, later ones show up below. Your words go to these services. Face finding runs in your browser. Signed in to Pollinations, pictures use your own allowance (about 0.002 Pollen each); the sign-in key stays in this tab only.',
     'ai.count': 'At once', 'st.extra': 'Another picture arrived',
+    'pl.in': 'Sign in to Pollinations: no logo, no queue', 'pl.on': 'Signed in to Pollinations', 'pl.out': 'Sign out', 'pl.bal': ' · N Pollen left',
+    'st.plOk': 'Signed in. New pictures have no logo.', 'st.plDenied': 'Sign-in cancelled', 'st.plBad': 'Sign-in did not work. Please try again.',
+    'st.plExpired': 'Pollinations sign-in ran out. Using the free queue.', 'st.plEmpty': 'Your Pollen is used up. Using the free queue.',
     'ai.stop': 'Stop', 'ai.ideas': 'Ideas:',
     'st.threads': ' · N threads',
     'st.wait': 'Free limit, waiting', 'st.stopped': 'Stopped', 'st.freeBusy': 'The free service is busy. Try again in a minute.',
@@ -50,6 +56,10 @@ const I18N = {
     'st.ai': 'AI 正在画…（10–60 秒）', 'st.aiFind': '正在找脸…', 'st.noKey': '先在“接口设置”里填 API Key',
     'st.threads': ' · N 线程',
     'st.extra': '又来了一张备选图',
+    'pl.bal': ' · 剩 N Pollen',
+    'st.load3d': '正在加载 3D…', 'st.no3d': '这个浏览器显示不了 3D。',
+    'st.plOk': '登录好了，新图不再有小标志。', 'st.plDenied': '已取消登录', 'st.plBad': '登录没成功，请再试一次。',
+    'st.plExpired': 'Pollinations 登录过期了，先用免费排队。', 'st.plEmpty': '你的 Pollen 用完了，先用免费排队。',
     'st.wait': '免费额度排队中，还要', 'st.stopped': '已停止', 'st.freeBusy': '免费服务太忙，过一分钟再试。',
     'st.noPrompt': '先写一句话', 'st.noSrc': '先放一张图片', 'st.noFace': '这个车型布局不同，暂不支持车头脸。',
     'st.found': '找到脸了', 'st.notFound': '没找到脸，请在小图上点一下脸。', 'st.aiErr': 'AI 出错：',
@@ -129,7 +139,9 @@ function buildSliders() {
   }
 }
 let lastStatus = '', lastExtra = '';
+let notice = null;                // a message that must outlive the next "ready" (shown in its place once)
 function setStatus(k, extra = '') {
+  if (k === 'st.ready' && notice) { k = notice; notice = null; extra = ''; }
   lastStatus = k; lastExtra = extra;
   const thr = k === 'st.ready' && pool ? t('st.threads').replace('N', pool.threads) : '';
   $('#status').textContent = k ? t(k) + extra + thr : '';
@@ -174,6 +186,7 @@ async function selectModel(id) {
   if (S.model !== id) return;                    // another car was picked meanwhile
   S.T = T;
   if (!S.src) setStatus('st.ready');              // loaded; nothing to draw until a picture is added
+  if (S.view === '3d') view3d(true);              // the 3D body follows the car even before a picture
   const c = $('#out'); c.width = S.T.W; c.height = S.T.H;
   $('#canvasWrap').style.aspectRatio = `${S.T.W}/${S.T.H}`;
   busy(false); schedule();
@@ -246,6 +259,17 @@ function syncProvider() {
   $('#aiCustom').hidden = !custom;
   $('#aiEdit').hidden = !custom;
   $('#aiFree').hidden = custom;
+  $('#pollen').hidden = custom;
+}
+// Pollinations sign-in row: button when signed out; name, Pollen left and "sign out" when signed in.
+let pollenBal = null;
+async function syncPollen(fetchBalance) {
+  const on = !!AI.pollenKey();
+  $('#pollenIn').hidden = on; $('#pollenOn').hidden = !on;
+  if (!on) pollenBal = null;
+  else if (fetchBalance) pollenBal = await AI.pollenBalance();
+  $('#pollenBal').textContent = AI.pollenKey() && pollenBal != null ? t('pl.bal').replace('N', (+pollenBal).toFixed(2)) : '';
+  if (on && !AI.pollenKey()) syncPollen(false);          // the balance call found the key refused
 }
 function openCfg() { $('#ai').open = true; $('#aiCfgBox').open = true; $('#aiKey').focus(); }
 let aiCtl = null;
@@ -376,8 +400,10 @@ function earlyExport() {
 }
 function paint() {
   const c = $('#out'), x = c.getContext('2d');
-  const showCar = S.view === 'car';
-  $('#carImg').hidden = !showCar; c.hidden = showCar;
+  const showCar = S.view === 'car', show3d = S.view === '3d';
+  $('#carImg').hidden = !showCar; c.hidden = showCar || show3d; $('#v3d').hidden = !show3d;
+  $('#empty').hidden = !!S.src || show3d;
+  view3d(show3d);
   if (!S.rgba) return;
   const img = new ImageData(new Uint8ClampedArray(S.rgba), S.T.W, S.T.H);
   if (S.view === 'lines') {
@@ -386,6 +412,35 @@ function paint() {
     for (let i = 0; i < W * H; i++) if (mask[i]) for (let k = 0; k < 3; k++) d[i * 4 + k] = d[i * 4 + k] * 0.55 + 255 * 0.45 * (k === 0 ? 0.3 : 0.2);
   }
   x.putImageData(img, 0, 0);
+}
+
+// ---------- 3D preview (its code and three.js load only when it is opened) ----------------------------
+let viewer = null, viewerLoading = null;
+async function view3d(on) {
+  if (!on) { viewer?.setActive(false); return; }
+  if (!S.T) return;
+  if (!viewer) {
+    if (!viewerLoading) {
+      setStatus('st.load3d');
+      viewerLoading = import('./view3d.js').then((m) => {
+        viewer = new m.Viewer($('#v3d'));
+        $('#v3d').addEventListener('v3d:spin', syncSpin);
+        setStatus('st.ready');
+      }).catch((e) => { console.error(e); viewerLoading = null; setStatus('st.no3d'); setView('sheet'); });
+    }
+    await viewerLoading;
+    if (!viewer || S.view !== '3d') return;
+  }
+  try { viewer.setCar(S.T, S.model); } catch (e) { console.error(e); setStatus('st.no3d'); return setView('sheet'); }
+  viewer.paint(S.rgba);
+  viewer.setActive(true);
+  syncSpin();
+}
+function syncSpin() { $('#v3dSpin').classList.toggle('on', !!viewer?.spinning); }
+function setView(v) {
+  S.view = v;
+  document.querySelectorAll('#view button').forEach((x) => x.classList.toggle('on', x.dataset.view === v));
+  paint();
 }
 
 // ---------- export ------------------------------------------------------------------------------
@@ -456,14 +511,40 @@ $('#aiPrompt').onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctr
   for (const [id, k] of Object.entries(map)) { $('#' + id).value = c[k]; $('#' + id).onchange = () => { AI.saveCfg(cfg()); syncProvider(); }; }
   syncProvider();
 }
-document.querySelectorAll('#view button').forEach((b) => (b.onclick = () => {
-  S.view = b.dataset.view; document.querySelectorAll('#view button').forEach((x) => x.classList.toggle('on', x === b)); paint();
-}));
+document.querySelectorAll('#view button').forEach((b) => (b.onclick = () => setView(b.dataset.view)));
+document.querySelectorAll('[data-cam]').forEach((b) => (b.onclick = () => viewer?.cam(b.dataset.cam)));
+$('#v3dSpin').onclick = () => { if (viewer) { viewer.spinning = !viewer.spinning; syncSpin(); } };
 $('#outline').onchange = schedule;
 $('#reset').onclick = () => { resetVals(); buildSliders(); schedule(); };
 $('#dl').onclick = download;
 $('#fname').oninput = () => ($('#fname').dataset.touched = '1');
-$('#lang').onclick = () => { lang = lang === 'zh' ? 'en' : 'zh'; localStorage.setItem('lang', lang); applyLang(); };
+$('#lang').onclick = () => { lang = lang === 'zh' ? 'en' : 'zh'; localStorage.setItem('lang', lang); applyLang(); syncPollen(false); };
+
+// Pollinations sign-in: the prompt is kept across the trip to enter.pollinations.ai and back.
+$('#pollenIn').onclick = (e) => {
+  e.preventDefault();
+  try { sessionStorage.setItem('pollen.prompt', $('#aiPrompt').value); } catch { /* storage off */ }
+  location.assign(AI.pollenLoginUrl());
+};
+$('#pollenOut').onclick = () => AI.pollenLogout();
+window.addEventListener('pollen:change', (e) => {
+  const k = { expired: 'st.plExpired', empty: 'st.plEmpty' }[e.detail];
+  if (k) { notice = k; setStatus(k); }
+  syncPollen(e.detail === 'login' || e.detail === 'empty');
+});
+// Coming back from enter.pollinations.ai (a full page load, or a hash change in the same page).
+function pollenReturn() {
+  const r = AI.pollenCallback();
+  if (!r) return;
+  $('#ai').open = true;
+  notice = { ok: 'st.plOk', denied: 'st.plDenied', bad: 'st.plBad' }[r];
+  setStatus(notice);
+  syncPollen(r === 'ok');
+}
+window.addEventListener('hashchange', pollenReturn);
+try { const p = sessionStorage.getItem('pollen.prompt'); if (p != null) { $('#aiPrompt').value = p; sessionStorage.removeItem('pollen.prompt'); } } catch { /* storage off */ }
 
 applyLang();
+syncPollen(!!AI.pollenKey());
+pollenReturn();
 selectModel(MODELS.some((m) => m.id === S.model) ? S.model : 'modely-l');

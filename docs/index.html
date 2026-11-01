@@ -7,6 +7,7 @@
 <meta name="description" content="把一张图片拖进来，自动生成特斯拉 Paint Shop 车身贴膜 PNG。支持全部官方车型，图片不上传，全部在浏览器里完成。">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="css/style.css">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.min.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
 </head>
 <body>
 <div class="bg-glow" aria-hidden="true"></div>
@@ -68,7 +69,11 @@
           <button id="aiStop" class="chip" type="button" data-i18n="ai.stop" hidden>停止</button>
         </div>
         <div id="aiHist" class="ai-hist" hidden></div>
-        <p id="aiFree" class="fine" data-i18n="ai.free">免费：FLUX（Hugging Face）和 Pollinations 同时开画，25 秒还没好再加 AI Horde。谁先画好用谁，后到的放在下面备选。你写的文字会发给这些服务。找脸在你的浏览器里完成。</p>
+        <div id="pollen" class="pollen">
+          <a id="pollenIn" class="chip" href="#" data-i18n="pl.in">登录 Pollinations：去掉小标志，不用排队</a>
+          <span id="pollenOn" hidden><i class="dot"></i><b data-i18n="pl.on">已登录 Pollinations</b><span id="pollenBal"></span><button id="pollenOut" class="link" type="button" data-i18n="pl.out">退出</button></span>
+        </div>
+        <p id="aiFree" class="fine" data-i18n="ai.free">免费：FLUX（Hugging Face）和 Pollinations 同时开画，25 秒还没好再加 AI Horde。谁先画好用谁，后到的放在下面备选。你写的文字会发给这些服务。找脸在你的浏览器里完成。登录 Pollinations 后用你自己的额度（每张约 0.002 Pollen），登录密钥只留在这个标签页。</p>
         <details class="ai-cfg" id="aiCfgBox">
           <summary data-i18n="ai.cfg">接口设置</summary>
           <label><span data-i18n="ai.prov">服务</span><select id="aiProv">
@@ -123,12 +128,24 @@
         <button class="on" data-view="sheet" data-i18n="v.sheet">贴图</button>
         <button data-view="lines" data-i18n="v.lines">看分区线</button>
         <button data-view="car" data-i18n="v.car">官方车图</button>
+        <button data-view="3d" data-i18n="v.3d">3D 预览</button>
       </div>
       <span id="status" class="status"></span>
     </div>
     <div class="canvas-wrap" id="canvasWrap">
       <canvas id="out" width="1024" height="1024"></canvas>
       <img id="carImg" alt="" hidden>
+      <div id="v3d" class="v3d" hidden>
+        <p class="v3d-hint" data-i18n="v3d.hint">拖动旋转，滚轮缩放。车身是近似形状。</p>
+        <div class="v3d-bar">
+          <button type="button" data-cam="three" data-i18n="cam.three">斜前</button>
+          <button type="button" data-cam="front" data-i18n="cam.front">正面</button>
+          <button type="button" data-cam="side" data-i18n="cam.side">侧面</button>
+          <button type="button" data-cam="rear" data-i18n="cam.rear">背面</button>
+          <button type="button" data-cam="top" data-i18n="cam.top">车顶</button>
+          <button type="button" id="v3dSpin" data-i18n="cam.spin">自动转</button>
+        </div>
+      </div>
       <div id="empty" class="empty">
         <div class="empty-car"></div>
         <p data-i18n="empty">先放一张图片</p>

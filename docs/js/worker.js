@@ -20,7 +20,7 @@ self.onmessage = async ({ data: m }) => {
       case 'prep': {
         const T = parseTemplate(m.img), s = surface(T), Z = zones(T);
         const msg = { t: 'prep', jid: m.jid, W: T.W, H: T.H, mask: T.mask, lines: T.lines, edge: T.edge,
-          theta: s.theta, dist: s.dist, dmax: s.dmax, z: Z ? { hood: Z.hood, left: Z.left, right: Z.right } : null, lab: Z ? Z.lab : null };
+          theta: s.theta, dist: s.dist, dmax: s.dmax, z: Z ? { hood: Z.hood, left: Z.left, right: Z.right, wide: !!Z.wide } : null, lab: Z ? Z.lab : null };
         const tr = [T.mask.buffer, T.lines.buffer, T.edge.buffer, s.theta.buffer, s.dist.buffer];
         if (Z) tr.push(Z.lab.buffer);
         reply(msg, tr);
@@ -32,7 +32,7 @@ self.onmessage = async ({ data: m }) => {
         TPL.set(m.id, {
           W: m.W, H: m.H, rows: m.rows, nrows: m.nrows, mask: m.mask, edge: m.edge,
           surf: { theta: m.theta, dist: m.dist, dmax: m.dmax },
-          zones: m.z ? { lab: m.lab, hood: m.z.hood, left: m.z.left, right: m.z.right } : null,
+          zones: m.z ? { lab: m.lab, hood: m.z.hood, left: m.z.left, right: m.z.right, wide: m.z.wide } : null,
         });
         break;
       }
