@@ -17,6 +17,7 @@ const I18N = {
     'v3d.hint': 'Drag to turn, scroll to zoom. The body is an approximate shape.',
     'cam.three': '3/4', 'cam.front': 'Front', 'cam.side': 'Side', 'cam.rear': 'Rear', 'cam.top': 'Top', 'cam.spin': 'Spin',
     'st.load3d': 'Loading 3D…', 'st.no3d': 'This browser cannot show the 3D view.',
+    'st.net3d': 'The 3D files did not download. Check your network, then click 3D again.',
     empty: 'Add a picture first', dl: 'Download wrap PNG',
     'how.t': 'Put it in the car', 'how.1': 'Make a folder', 'how.1p': 'On a USB drive (exFAT / FAT32) make a <code>Wraps</code> folder at the top level.',
     'how.2': 'Copy it in', 'how.2p': 'Put the PNG in. Up to 10 at a time.', 'how.3': 'Plug it in',
@@ -50,6 +51,7 @@ const I18N = {
     'st.ai': 'AI is drawing… (10–60 s)', 'st.aiFind': 'Looking for the face…', 'st.noKey': 'Fill in the API key first',
     'st.noPrompt': 'Write a line first', 'st.noSrc': 'Add a picture first', 'st.noFace': 'This car has a different layout. Face style is not ready for it.',
     'st.found': 'Face found', 'st.notFound': 'No face found. Click the face yourself.', 'st.aiErr': 'AI failed: ',
+    'st.netFace': 'The face finder did not download. Click the face yourself, or try "Find the face again" later.',
     'st.urlBlocked': 'The API gave a link the browser may not read. Try a model that returns b64_json.',
   },
   zh: {
@@ -59,12 +61,14 @@ const I18N = {
     'st.extra': '又来了一张备选图',
     'pl.bal': ' · 剩 N Pollen',
     'st.load3d': '正在加载 3D…', 'st.no3d': '这个浏览器显示不了 3D。',
+    'st.net3d': '3D 文件没下载下来，请检查网络后再点一次 3D。',
     'st.plOk': '登录好了，新图不再有小标志。', 'st.plDenied': '已取消登录', 'st.plBad': '登录没成功，请再试一次。',
     'st.plExpired': 'Pollinations 登录过期了，先用免费排队。', 'st.plEmpty': '你的 Pollen 用完了，先用免费排队。',
     'st.plNoImg': '这次 Pollinations 登录没有勾选生图，先用免费排队。',
     'st.wait': '免费额度排队中，还要', 'st.stopped': '已停止', 'st.freeBusy': '免费服务太忙，过一分钟再试。',
     'st.noPrompt': '先写一句话', 'st.noSrc': '先放一张图片', 'st.noFace': '这个车型布局不同，暂不支持车头脸。',
     'st.found': '找到脸了', 'st.notFound': '没找到脸，请在小图上点一下脸。', 'st.aiErr': 'AI 出错：',
+    'st.netFace': '找脸工具没下载下来。请在小图上点一下脸，或稍后点“重新找脸”。',
     'st.urlBlocked': '接口返回的图片链接浏览器读不了，换个能返回 b64_json 的模型。',
     horizonD: '地平线高度', horizonShift: '天空 / 海面', spin: '转一转', oceanK: '海面深度', skyK: '天空高度',
     zoom: '放大', panX: '左右移', panY: '上下移', angle: '旋转',
@@ -246,7 +250,11 @@ async function findFace(useApi) {
       if (r.face) { S.face = back(r.face); S.faceFrom = 'ai'; setStatus('st.found'); } else setStatus('st.notFound');
     }
     showRects(); schedule();
-  } catch (e) { console.error(e); if (S.src === src) setStatus('st.aiErr', e.message); }
+  } catch (e) {
+    console.error(e);
+    // the free finder only fails when its files (MediaPipe) could not download; the API path keeps the API's own message
+    if (S.src === src) useApi ? setStatus('st.aiErr', e.message) : setStatus('st.netFace');
+  }
   finally { aiBusy(false); }
 }
 const blobToDataUrl = (b) => new Promise((res) => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(b); });
@@ -424,11 +432,13 @@ async function view3d(on) {
   if (!viewer) {
     if (!viewerLoading) {
       setStatus('st.load3d');
-      viewerLoading = import('./view3d.js').then((m) => {
+      // three.js comes from the CDN. It is downloaded first, so a failed download is not remembered by the
+      // browser and clicking 3D again really tries again. A download failure is a network problem, not a browser one.
+      viewerLoading = AI.prefetch(threeFiles()).then(() => import('./view3d.js').catch((e) => { e.net = true; throw e; })).then((m) => {
         viewer = new m.Viewer($('#v3d'));
         $('#v3d').addEventListener('v3d:spin', syncSpin);
         setStatus('st.ready');
-      }).catch((e) => { console.error(e); viewerLoading = null; setStatus('st.no3d'); setView('sheet'); });
+      }).catch((e) => { console.error(e); viewerLoading = null; setStatus(e?.net ? 'st.net3d' : 'st.no3d'); setView('sheet'); });
     }
     await viewerLoading;
     if (!viewer || S.view !== '3d') return;
@@ -437,6 +447,11 @@ async function view3d(on) {
   viewer.paint(S.rgba);
   viewer.setActive(true);
   syncSpin();
+}
+// the files view3d.js imports, read from the page's import map (keep the addon list in step with view3d.js)
+function threeFiles() {
+  const m = JSON.parse(document.querySelector('script[type="importmap"]').textContent).imports;
+  return [m.three, m['three/addons/'] + 'controls/OrbitControls.js', m['three/addons/'] + 'environments/RoomEnvironment.js'];
 }
 function syncSpin() { $('#v3dSpin').classList.toggle('on', !!viewer?.spinning); }
 function setView(v) {

@@ -290,7 +290,10 @@ function getWorker() {
   if (worker) return worker;
   try {
     worker = new Worker(new URL('./ai-worker.js', import.meta.url));        // classic worker: MediaPipe uses importScripts
-    worker.onmessage = ({ data: m }) => { const w = waits.get(m.id); if (!w) return; waits.delete(m.id); m.t === 'err' ? w.rej(new Error(m.msg)) : w.res(m); };
+    worker.onmessage = ({ data: m }) => {
+      const w = waits.get(m.id); if (!w) return; waits.delete(m.id);
+      m.t === 'err' ? w.rej(Object.assign(new Error(m.msg), { net: !!m.net })) : w.res(m);   // net: its files did not download
+    };
     worker.onerror = (e) => { e.preventDefault?.(); dropWorker(new Error(e.message || 'ai worker failed')); };
   } catch { workerOk = false; worker = null; }
   return worker;
@@ -304,11 +307,27 @@ const ask = (msg, transfer = []) => new Promise((res, rej) => {
   const id = ++seq; waits.set(id, { res, rej }); w.postMessage({ ...msg, id }, transfer);
 });
 
+// Download files completely before import() asks for them. A failed import() is remembered by the browser for
+// the life of the page (even after the network is back), but a failed fetch() is not: importing only after this
+// succeeds keeps "try again later" working. The import then reads the files from the cache.
+export async function prefetch(urls) {
+  try {
+    await Promise.all(urls.map(async (u) => {
+      const r = await fetch(u);
+      if (!r.ok) throw new Error(`download failed (${r.status}): ${u}`);
+      await r.arrayBuffer();
+    }));
+  } catch (e) { e.net = true; throw e; }
+}
+
 // Start loading the face + person models in the background. Safe to call many times.
 let preloading = null;
 export function preload() {
   return (preloading ??= ask({ t: 'preload' })
-    .catch((e) => { console.warn('[ai] worker preload failed, using the page:', e); dropWorker(e); return mediapipe(); })
+    .catch((e) => {
+      if (e.net) throw e;                         // files did not download: the page would fail the same way. Keep the worker.
+      console.warn('[ai] worker preload failed, using the page:', e); dropWorker(e); return mediapipe();
+    })
     .catch((e) => { preloading = null; console.warn('[ai] face models not loaded (offline?), will try again:', e); }));
 }
 
@@ -317,6 +336,7 @@ const MODELS = 'https://storage.googleapis.com/mediapipe-models';
 let mpTasks = null;
 function mediapipe() {
   return (mpTasks ??= (async () => {
+    await prefetch([`${MP}/vision_bundle.mjs`]);
     const v = await import(`${MP}/vision_bundle.mjs`);
     const files = await v.FilesetResolver.forVisionTasks(`${MP}/wasm`);
     const mk = (Task, path, extra = {}) => Task.createFromOptions(files, { baseOptions: { modelAssetPath: `${MODELS}/${path}`, delegate: 'CPU' }, runningMode: 'IMAGE', ...extra })
@@ -343,7 +363,10 @@ export async function localFind(img) {
   const { cv, data } = inputPixels(img);
   if (getWorker()) {
     try { const r = await ask({ t: 'find', img: data }, [data.data.buffer]); return { face: r.face, subject: r.subject, alpha: r.alpha }; }
-    catch (e) { console.warn('[ai] worker find failed, using the page:', e); dropWorker(e); }
+    catch (e) {
+      if (e.net) throw e;                         // files did not download: the page would fail the same way. Keep the worker.
+      console.warn('[ai] worker find failed, using the page:', e); dropWorker(e);
+    }
   }
   const { face: fd, seg } = await mediapipe();
   const { boxes } = await import('./ai-boxes.js');

@@ -5,8 +5,16 @@ const MP = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
 const MODELS = 'https://storage.googleapis.com/mediapipe-models';
 let tasks = null;
 
+// Download the bundle completely before import() asks for it: a failed import() is remembered for the life of
+// the worker, a failed fetch() is not, so a later try can still work. net marks "did not download".
+async function prefetch(u) {
+  try { const r = await fetch(u); if (!r.ok) throw new Error(`download failed (${r.status}): ${u}`); await r.arrayBuffer(); }
+  catch (e) { e.net = true; throw e; }
+}
+
 function init() {
   return (tasks ??= (async () => {
+    await prefetch(`${MP}/vision_bundle.mjs`);
     const v = await import(`${MP}/vision_bundle.mjs`);
     const files = await v.FilesetResolver.forVisionTasks(`${MP}/wasm`);
     const mk = (Task, path, extra = {}) => Task.createFromOptions(files, { baseOptions: { modelAssetPath: `${MODELS}/${path}`, delegate: 'CPU' }, runningMode: 'IMAGE', ...extra });
@@ -30,6 +38,6 @@ self.onmessage = async ({ data: m }) => {
       self.postMessage({ t: 'ok', id: m.id, ...r }, r.alpha ? [r.alpha.data.buffer] : []);
     }
   } catch (e) {
-    self.postMessage({ t: 'err', id: m.id, msg: String((e && e.message) || e) });
+    self.postMessage({ t: 'err', id: m.id, msg: String((e && e.message) || e), net: !!(e && e.net) });
   }
 };
