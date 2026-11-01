@@ -166,5 +166,13 @@
 </footer>
 
 <script type="module" src="js/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js', { scope: './' }).catch((e) => console.warn('SW register failed', e));
+      navigator.serviceWorker.ready.then((r) => setTimeout(() => r.active && r.active.postMessage('warm'), 4000));
+    });
+  }
+</script>
 </body>
 </html>
