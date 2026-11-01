@@ -33,7 +33,7 @@ const I18N = {
     'f.tip': 'Click the face in the picture to put it on the hood. Red = hood, blue = doors.',
     'f.ai': 'Find the face again', 'f.side': 'Figure on the doors', 'f.cut': 'Person only (cut out)',
     'ai.t': 'AI picture', 'ai.s': 'free, no sign-up', 'ai.ph': 'One line, e.g. cyberpunk city at night, neon, rain',
-    'ai.prov': 'Service', 'ai.pFree': 'Free (Pollinations)', 'ai.pCustom': 'My own API (OpenAI style)',
+    'ai.prov': 'Service', 'ai.pFree': 'Free (no sign-up)', 'ai.pCustom': 'My own API (OpenAI style)',
     'ai.free': 'Free: FLUX (Hugging Face) and Pollinations draw at the same time; AI Horde joins after 25 s. The first picture is used, later ones show up below. Your words go to these services. Face finding runs in your browser. Signed in to Pollinations, pictures use your own allowance (about 0.002 Pollen each); the sign-in key stays in this tab only.',
     'ai.count': 'At once', 'st.extra': 'Another picture arrived',
     'pl.in': 'Sign in to Pollinations: no logo, no queue', 'pl.on': 'Signed in to Pollinations', 'pl.out': 'Sign out', 'pl.bal': ' · N Pollen left',
@@ -540,8 +540,7 @@ function pollenReturn() {
   if (!r) return;
   $('#ai').open = true;
   notice = { ok: 'st.plOk', denied: 'st.plDenied', bad: 'st.plBad' }[r];
-  setStatus(notice);
-  syncPollen(r === 'ok');
+  setStatus(notice);                                     // 'ok' already refreshed the row through pollen:change
 }
 window.addEventListener('hashchange', pollenReturn);
 try { const p = sessionStorage.getItem('pollen.prompt'); if (p != null) { $('#aiPrompt').value = p; sessionStorage.removeItem('pollen.prompt'); } } catch { /* storage off */ }
