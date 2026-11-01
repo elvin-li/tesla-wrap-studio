@@ -1,5 +1,6 @@
 import { MODELS, templateUrl, vehicleUrl } from './models.js';
 import { parseTemplate, render, exportWrap, detectHorizon, zones } from './engine.js';
+import { Pool, poolSupported } from './pool.js';
 import * as AI from './ai.js';
 
 // ---------- i18n --------------------------------------------------------------------------------
@@ -32,6 +33,7 @@ const I18N = {
     'ai.prov': 'Service', 'ai.pFree': 'Free (Pollinations)', 'ai.pCustom': 'My own API (OpenAI style)',
     'ai.free': 'Free: about 1 picture every 45 s. Your words go to Pollinations. Face finding runs in your browser.',
     'ai.stop': 'Stop', 'ai.ideas': 'Ideas:',
+    'st.threads': ' · N threads',
     'st.wait': 'Free limit, waiting', 'st.stopped': 'Stopped', 'st.freeBusy': 'The free service is busy. Try again in a minute.',
     'ai.gen': 'Make a new picture', 'ai.edit': 'Change this picture', 'ai.cfg': 'API settings', 'ai.base': 'API URL',
     'ai.img': 'Image model', 'ai.vis': 'Vision model',
@@ -45,6 +47,7 @@ const I18N = {
   zh: {
     faceSize: '脸大小', faceCrop: '脸取景', sideZoom: '车门人物', sideShift: '前后移', bgDark: '背景压暗', feather: '边缘柔和',
     'st.ai': 'AI 正在画…（10–60 秒）', 'st.aiFind': '正在找脸…', 'st.noKey': '先在“接口设置”里填 API Key',
+    'st.threads': ' · N 线程',
     'st.wait': '免费额度排队中，还要', 'st.stopped': '已停止', 'st.freeBusy': '免费服务太忙，过一分钟再试。',
     'st.noPrompt': '先写一句话', 'st.noSrc': '先放一张图片', 'st.noFace': '这个车型布局不同，暂不支持车头脸。',
     'st.found': '找到脸了', 'st.notFound': '没找到脸，请在小图上点一下脸。', 'st.aiErr': 'AI 出错：',
@@ -85,6 +88,15 @@ const SL = {
 };
 const S = { model: localStorage.getItem('model') || 'modely-l', mode: 'wrap', view: 'sheet', src: null, srcName: '', T: null, rgba: null, vals: {} };
 const templates = new Map();
+// Worker pool: frames, template prep and export run on other CPU cores. No pool -> the old one-thread path.
+let pool = null;
+if (poolSupported()) {
+  try {
+    pool = new Pool();
+    pool.onfail = (e) => { console.warn('[pool] back to one thread:', e); pool = null; S.T = null; if (S.model) selectModel(S.model); };
+  } catch (e) { console.warn('[pool] not started:', e); pool = null; }
+}
+window.__wrap = { threads: pool ? pool.threads : 1, frames: 0, lastFrameMs: 0 };
 const resetVals = () => { for (const k of ['wrap', 'poster', 'mirror', 'tile', 'face', 'common']) for (const [n, , , , d] of SL[k]) S.vals[`${k}.${n}`] = d; };
 resetVals();
 const val = (n) => S.vals[`${S.mode}.${n}`] ?? S.vals[`common.${n}`];
@@ -97,6 +109,8 @@ function buildModels() {
     b.className = 'model' + (m.id === S.model ? ' on' : ''); b.setAttribute('role', 'option'); b.dataset.id = m.id;
     b.innerHTML = `<img loading="lazy" src="${vehicleUrl(m.id)}" alt=""><b>${m.name}</b><small>${m.sub[lang]}</small>`;
     b.onclick = () => selectModel(m.id);
+    b.onpointerenter = b.onfocus = () => prefetchModel(m.id);
+    b.onpointerleave = () => clearTimeout(hoverTimer);
     box.appendChild(b);
   }
 }
@@ -113,7 +127,11 @@ function buildSliders() {
   }
 }
 let lastStatus = '', lastExtra = '';
-function setStatus(k, extra = '') { lastStatus = k; lastExtra = extra; $('#status').textContent = k ? t(k) + extra : ''; }
+function setStatus(k, extra = '') {
+  lastStatus = k; lastExtra = extra;
+  const thr = k === 'st.ready' && pool ? t('st.threads').replace('N', pool.threads) : '';
+  $('#status').textContent = k ? t(k) + extra + thr : '';
+}
 
 // ---------- template / source -------------------------------------------------------------------
 function loadImage(src, cors) {
@@ -125,10 +143,21 @@ function pixels(im, maxSide) {
   const c = new OffscreenCanvas(w, h), x = c.getContext('2d', { willReadFrequently: true });
   x.drawImage(im, 0, 0, w, h); return x.getImageData(0, 0, w, h);
 }
+const tplPixels = async (id) => pixels(await loadImage(templateUrl(id), true), 4096);
 async function getTemplate(id) {
+  if (pool) {
+    try { return await pool.template(id, tplPixels); }
+    catch (e) { if (pool) throw e; }            // the pool stopped: carry on with one thread
+  }
   if (templates.has(id)) return templates.get(id);
-  const im = await loadImage(templateUrl(id), true);
-  const T = parseTemplate(pixels(im, 4096)); T.id = id; templates.set(id, T); return T;
+  const T = parseTemplate(await tplPixels(id)); T.id = id; T.hasZones = !!zones(T); templates.set(id, T); return T;
+}
+// Hovering a car starts its template prep in the background, so the click is instant.
+let hoverTimer = 0;
+function prefetchModel(id) {
+  clearTimeout(hoverTimer);
+  if (!pool || id === S.model) return;
+  hoverTimer = setTimeout(() => pool?.template(id, tplPixels).catch(() => {}), 150);
 }
 async function selectModel(id) {
   S.model = id; localStorage.setItem('model', id);
@@ -137,7 +166,12 @@ async function selectModel(id) {
   $('.empty-car').style.backgroundImage = `url(${templateUrl(id)})`;
   if (!$('#fname').dataset.touched) $('#fname').value = defaultName();
   busy(true); setStatus('st.loadTpl');
-  try { S.T = await getTemplate(id); } catch { setStatus('st.err'); busy(false); return; }
+  if (pool) pool.active = id;
+  let T;
+  try { T = await getTemplate(id); } catch (e) { console.error(e); if (S.model === id) { setStatus('st.err'); busy(false); } return; }
+  if (S.model !== id) return;                    // another car was picked meanwhile
+  S.T = T;
+  if (!S.src) setStatus('st.ready');              // loaded; nothing to draw until a picture is added
   const c = $('#out'); c.width = S.T.W; c.height = S.T.H;
   $('#canvasWrap').style.aspectRatio = `${S.T.W}/${S.T.H}`;
   busy(false); schedule();
@@ -147,6 +181,7 @@ async function setSource(blobOrUrl, name) {
   const im = await loadImage(url, false);
   const d = pixels(im, 2048);
   S.src = { w: d.width, h: d.height, data: d.data };
+  pool?.setSource(S.src);                         // sent to the workers once per picture
   S.srcName = (name || 'wrap').replace(/\.[^.]+$/, '');
   S.autoHorizon = detectHorizon(S.src);
   S.im = im; S.face = guessFace(); S.subject = null; S.faceFrom = 'guess'; setStatus('st.ready');
@@ -178,7 +213,7 @@ async function findFace(useApi) {
       src.looked = true;
       const r = await AI.localFind(S.im);
       if (S.src !== src) return;
-      if (r.alpha) src.alpha = r.alpha;
+      if (r.alpha) { src.alpha = r.alpha; pool?.setAlpha(r.alpha); }
       if (r.subject) S.subject = r.subject;
       if (r.face && S.faceFrom !== 'click') { S.face = r.face; S.faceFrom = 'local'; }
       setStatus(r.face ? 'st.found' : 'st.notFound');
@@ -272,10 +307,63 @@ function draw() {
     face: S.face, subject: S.subject, sideOn: $('#sideOn').checked, faceSize: val('faceSize'), faceCrop: val('faceCrop'),
     sideZoom: val('sideZoom'), sideShift: val('sideShift'), bgDark: val('bgDark'), feather: val('feather'), cut: $('#cutOn').checked,
   }); else Object.assign(o, { zoom: val('zoom'), panX: val('panX'), panY: val('panY'), angle: val('angle') });
+  const t0 = performance.now();
+  if (pool) return requestFrame(o, t0);
   S.rgba = render(S.T, S.src, o);
+  frameDone(t0);
+}
+// Latest wins: one frame in flight; while it renders, newer requests replace each other.
+let frameBusy = false, nextFrame = null;
+function requestFrame(o, t0) {
+  nextFrame = { o, t0, T: S.T, sid: pool.src };
+  if (!frameBusy) pumpFrames();
+}
+async function pumpFrames() {
+  frameBusy = true;
+  while (nextFrame && pool) {
+    const job = nextFrame; nextFrame = null;
+    try {
+      const rgba = await pool.frame(job.T, job.o);
+      if (job.T === S.T && pool && job.sid === pool.src) { S.rgba = rgba; frameDone(job.t0); }
+    } catch (e) { if (pool) console.error(e); break; }
+  }
+  frameBusy = false;
+}
+function frameDone(t0) {
+  S.frame = (S.frame || 0) + 1;
   paint(); $('#checks').innerHTML = '';
-  if (S.mode === 'face' && !zones(S.T)) setStatus('st.noFace');
+  if (S.mode === 'face' && !S.T.hasZones) setStatus('st.noFace');
   else if (!lastStatus.startsWith('st.') || ['st.ready', 'st.render', 'st.loadTpl', 'st.noFace'].includes(lastStatus)) setStatus('st.ready');
+  const ms = performance.now() - t0;
+  window.__wrap.frames++; window.__wrap.lastFrameMs = ms; window.__wrap.threads = pool ? pool.threads : 1;
+  document.dispatchEvent(new CustomEvent('wrap:frame', { detail: { ms, threads: window.__wrap.threads } }));
+  earlyExport();
+  if (!warmed) { warmed = true; setTimeout(warmUp, 1500); }
+}
+// After the first picture, idle cores prepare every other car in the background (skipped on small or
+// data-saving devices), so switching cars is instant. One template at a time on the helper worker.
+let warmed = false;
+async function warmUp() {
+  if (!pool || (navigator.deviceMemory || 8) < 8 || navigator.connection?.saveData) return;
+  const idle = () => new Promise((r) => (window.requestIdleCallback ? requestIdleCallback(r, { timeout: 1000 }) : setTimeout(r, 50)));
+  for (const m of MODELS) {
+    if (!pool) return;
+    if (m.id === S.model) continue;
+    await idle();
+    await pool?.template(m.id, tplPixels).catch(() => {});
+  }
+}
+// While the picture sits still, make its PNG on the helper worker, so "download" is instant.
+let early = null, earlyTimer = 0;
+function earlyExport() {
+  clearTimeout(earlyTimer); early = null;
+  if (!pool) return;
+  const frame = S.frame, T = S.T, rgba = S.rgba;
+  earlyTimer = setTimeout(() => {
+    if (!pool || S.frame !== frame) return;
+    const p = pool.exportOne(T, rgba, 0); p.catch(() => {});
+    early = { frame, p };
+  }, 400);
 }
 function paint() {
   const c = $('#out'), x = c.getContext('2d');
@@ -299,9 +387,17 @@ function cleanName() {
 async function download() {
   if (!S.rgba) return;
   const name = cleanName(); busy(true); setStatus('st.export'); $('#dl').disabled = true;
+  const t0 = performance.now();
   try {
-    const r = await exportWrap(S.T, S.rgba);
-    const outsideBlack = (() => { for (let i = 0; i < S.T.mask.length; i++) if (!S.T.mask[i] && r.index[i] !== 0) return false; return true; })();
+    let r, outsideBlack;
+    if (pool) {
+      r = await pool.exportFirst(S.T, S.rgba, early && early.frame === S.frame ? early.p : null);
+      outsideBlack = r.black;
+    } else {
+      r = await exportWrap(S.T, S.rgba);
+      outsideBlack = (() => { for (let i = 0; i < S.T.mask.length; i++) if (!S.T.mask[i] && r.index[i] !== 0) return false; return true; })();
+    }
+    document.dispatchEvent(new CustomEvent('wrap:export', { detail: { ms: performance.now() - t0, bytes: r.blob.size, colors: r.colors, dither: r.dither } }));
     const checks = [
       ['c.size', `${S.T.W}×${S.T.H}`, S.T.W <= 1024 && S.T.H <= 1024 && Math.max(S.T.W, S.T.H) >= 512],
       ['c.bytes', `${Math.round(r.blob.size / 1024)} KB`, r.blob.size < 1_000_000],

@@ -220,8 +220,15 @@ function faceSampler(T, src, o, px) {
 // ---------- render ------------------------------------------------------------------------------
 // opts: mode wrap|poster|mirror|tile, zoom, panX, panY, angle, spin, horizonD, horizonRow, oceanK, skyK,
 //       bright, sat, contrast, vignette, outline
-export function render(T, src, o) {
-  const { W, H, mask, edge } = T, out = new Uint8ClampedArray(W * H * 4), px = new Float32Array(3);
+//
+// The per-pixel math is isolated in makeSampler/renderBand so one worker can fill any row range
+// [y0,y1) of the frame with EXACTLY the same arithmetic as the full-frame render. render() is kept
+// as a thin wrapper over renderBand(0,H) for the single-thread fallback and the pixel-identity tests.
+
+// Build the sampler closure + shared post-process params for a given template/source/options.
+// px is the scratch Float32Array(3) the sampler writes the source colour into.
+export function makeSampler(T, src, o, px) {
+  const { W, H } = T;
   let sampler;
   if (o.mode === 'wrap') {
     const { theta, dist, dmax } = surface(T);
@@ -251,9 +258,18 @@ export function render(T, src, o) {
       bilinear(src, u, v, px, 0);
     };
   }
+  return sampler;
+}
+
+// Fill rows [y0,y1) using the given sampler. Identical arithmetic to render().
+// base = the frame row stored at index 0 of T's per-pixel arrays and of `out` (0 for full-size arrays;
+// a worker that keeps only its own rows passes base = y0 - <row offset of this band in its arrays>).
+// x and y stay absolute, so geometry, vignette and sampling are unchanged.
+export function renderBand(T, o, sampler, px, out, y0, y1, base = 0) {
+  const { W, H, mask, edge } = T;
   const br = o.bright, sat = o.sat, con = o.contrast, vig = o.vignette, R = Math.hypot(W, H) * 0.5;
-  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-    const i = y * W + x, j = i * 4;
+  for (let y = y0; y < y1; y++) for (let x = 0; x < W; x++) {
+    const i = (y - base) * W + x, j = i * 4;
     out[j + 3] = 255;
     if (!mask[i]) continue;
     if (o.outline && edge[i]) { out[j] = OUTLINE[0]; out[j + 1] = OUTLINE[1]; out[j + 2] = OUTLINE[2]; continue; }
@@ -268,6 +284,12 @@ export function render(T, src, o) {
     if (out[j] + out[j + 1] + out[j + 2] === 0) out[j] = 1;        // keep "pure black" reserved for outside
   }
   return out;
+}
+
+export function render(T, src, o) {
+  const { W, H } = T, out = new Uint8ClampedArray(W * H * 4), px = new Float32Array(3);
+  const sampler = makeSampler(T, src, o, px);
+  return renderBand(T, o, sampler, px, out, 0, H);
 }
 
 // ---------- quantise + PNG ----------------------------------------------------------------------
