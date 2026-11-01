@@ -74,7 +74,8 @@ export function pollenLogout(why = 'logout') {
 export function pollenLoginUrl() {
   const state = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
   sessionStorage.setItem(PSTATE, state);
-  const q = new URLSearchParams({ redirect_uri: location.origin + location.pathname, models: 'image,text', budget: '5', expiry: '30', state });
+  // no scope: a budgeted key can read its own balance and make pictures without one. expiry 7 days (their default).
+  const q = new URLSearchParams({ redirect_uri: location.origin + location.pathname, models: 'image,text', budget: '5', expiry: '7', state });
   if (POLLEN_APP_KEY) q.set('client_id', POLLEN_APP_KEY);
   return 'https://enter.pollinations.ai/authorize?' + q;
 }
@@ -93,12 +94,13 @@ export function pollenCallback() {
   pollenChanged('login');
   return 'ok';
 }
-// Pollen left on this key (null when unknown). A refused key is dropped.
+// Pollen left on this key (null when unknown). A refused key (401) is dropped. A key whose budget the visitor
+// cleared on the consent screen gets 403 here (no budget, no account:usage scope): it still makes pictures.
 export async function pollenBalance() {
   const key = pollenKey(); if (!key) return null;
   try {
     const r = await fetch(`${POLL_GEN}/account/balance`, { headers: { Authorization: `Bearer ${key}` } });
-    if (r.status === 401 || r.status === 403) { pollenLogout('expired'); return null; }
+    if (r.status === 401) { pollenLogout('expired'); return null; }
     if (!r.ok) return null;
     const j = await r.json();
     return typeof j.balance === 'number' ? j.balance : null;
@@ -110,7 +112,8 @@ async function pollinationsKeyed(prompt, { signal }) {
   const url = `${POLL_GEN}/image/${encodeURIComponent(prompt)}?model=flux&width=1536&height=960&seed=${(Math.random() * 2147483647) | 0}`;
   const r = await fetch(url, { signal, headers: { Authorization: `Bearer ${key}` } });
   if (r.ok && (r.headers.get('content-type') || '').startsWith('image/')) return r.blob();
-  if (r.status === 401 || r.status === 403) { pollenLogout('expired'); throw new Error('pollen-expired'); }
+  if (r.status === 401) { pollenLogout('expired'); throw new Error('pollen-expired'); }
+  if (r.status === 403) { pollenLogout('noimage'); throw new Error('pollen-noimage'); }   // image models were unticked
   if (r.status === 402) { pollenChanged('empty'); throw new Error('pollen-empty'); }
   throw new Error(`pollen HTTP ${r.status}`);
 }

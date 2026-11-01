@@ -39,6 +39,7 @@ const I18N = {
     'pl.in': 'Sign in to Pollinations: no logo, no queue', 'pl.on': 'Signed in to Pollinations', 'pl.out': 'Sign out', 'pl.bal': ' · N Pollen left',
     'st.plOk': 'Signed in. New pictures have no logo.', 'st.plDenied': 'Sign-in cancelled', 'st.plBad': 'Sign-in did not work. Please try again.',
     'st.plExpired': 'Pollinations sign-in ran out. Using the free queue.', 'st.plEmpty': 'Your Pollen is used up. Using the free queue.',
+    'st.plNoImg': 'This Pollinations sign-in does not allow pictures. Using the free queue.',
     'ai.stop': 'Stop', 'ai.ideas': 'Ideas:',
     'st.threads': ' · N threads',
     'st.wait': 'Free limit, waiting', 'st.stopped': 'Stopped', 'st.freeBusy': 'The free service is busy. Try again in a minute.',
@@ -60,6 +61,7 @@ const I18N = {
     'st.load3d': '正在加载 3D…', 'st.no3d': '这个浏览器显示不了 3D。',
     'st.plOk': '登录好了，新图不再有小标志。', 'st.plDenied': '已取消登录', 'st.plBad': '登录没成功，请再试一次。',
     'st.plExpired': 'Pollinations 登录过期了，先用免费排队。', 'st.plEmpty': '你的 Pollen 用完了，先用免费排队。',
+    'st.plNoImg': '这次 Pollinations 登录没有勾选生图，先用免费排队。',
     'st.wait': '免费额度排队中，还要', 'st.stopped': '已停止', 'st.freeBusy': '免费服务太忙，过一分钟再试。',
     'st.noPrompt': '先写一句话', 'st.noSrc': '先放一张图片', 'st.noFace': '这个车型布局不同，暂不支持车头脸。',
     'st.found': '找到脸了', 'st.notFound': '没找到脸，请在小图上点一下脸。', 'st.aiErr': 'AI 出错：',
@@ -528,7 +530,7 @@ $('#pollenIn').onclick = (e) => {
 };
 $('#pollenOut').onclick = () => AI.pollenLogout();
 window.addEventListener('pollen:change', (e) => {
-  const k = { expired: 'st.plExpired', empty: 'st.plEmpty' }[e.detail];
+  const k = { expired: 'st.plExpired', empty: 'st.plEmpty', noimage: 'st.plNoImg' }[e.detail];
   if (k) { notice = k; setStatus(k); }
   syncPollen(e.detail === 'login' || e.detail === 'empty');
 });
